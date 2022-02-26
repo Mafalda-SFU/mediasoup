@@ -1,5 +1,5 @@
 {
-  "name": "mediasoup",
+  "name": "@mafalda/mediasoup",
   "version": "3.10.3",
   "description": "Cutting Edge WebRTC Video Conferencing",
   "contributors": [
@@ -12,7 +12,7 @@
   "license": "ISC",
   "repository": {
     "type": "git",
-    "url": "https://github.com/versatica/mediasoup.git"
+    "url": "https://github.com/mafalda/mediasoup.git"
   },
   "funding": {
     "type": "opencollective",
