@@ -56,7 +56,6 @@
     "lint:worker": "node npm-scripts.js lint:worker",
     "postinstall": "node npm-scripts.js postinstall",
     "precoverage": "npm run worker:build",
-    "prepack": "node npm-scripts.js prepack",
     "prepare": "node npm-scripts.js prepare",
     "pretest:node": "npm run worker:build",
     "release": "node npm-scripts.js release",

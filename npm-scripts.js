@@ -6,7 +6,11 @@ const fs = require('fs');
 const { join } = require('path');
 const { execSync } = require('child_process');
 const { version } = require('./package.json');
-const { getTriplet } = require('./node/lib/utils');
+// const { getTriplet } = require('./node/lib/utils');
+function getTriplet()
+{
+	return `${os.platform()}-${os.arch()}`;
+}
 
 const isFreeBSD = os.platform() === 'freebsd';
 const isWindows = os.platform() === 'win32';
@@ -35,6 +39,20 @@ switch (task)
 	case 'prepare':
 	{
 		buildTypescript(/* force */ false);
+
+		const path = join(
+			__dirname, 'worker', 'out', getTriplet(), 'Release', 'mediasoup-worker'
+		);
+
+		let canAccess = false;
+
+		try
+		{
+			fs.accessSync(path, fs.constants.X_OK);
+			canAccess = true;
+		}
+		catch (e) {}
+		if (!canAccess) executeCmd('npm run worker:build');
 
 		// TODO: Compile flatbuffers.
 
@@ -65,25 +83,6 @@ switch (task)
 		{
 			cleanWorker();
 		}
-
-		break;
-	}
-
-	case 'prepack':
-	{
-		const path = join(
-			__dirname, 'worker', 'out', getTriplet(), 'Release', 'mediasoup-worker'
-		);
-
-		let canAccess = false;
-
-		try
-		{
-			fs.accessSync(path, fs.constants.X_OK);
-			canAccess = true;
-		}
-		catch (e) {}
-		if (!canAccess) execute('npm run worker:build');
 
 		break;
 	}
