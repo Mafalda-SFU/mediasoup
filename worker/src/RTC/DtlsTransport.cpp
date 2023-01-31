@@ -9,7 +9,7 @@
 #include <openssl/err.h>
 #include <openssl/evp.h>
 #include <uv.h>
-#include <cstdio>  // std::sprintf(), std::fopen()
+#include <cstdio>  // std::snprintf(), std::fopen()
 #include <cstring> // std::memcpy(), std::strcmp()
 
 #define LOG_OPENSSL_ERROR(desc)                                                                    \
@@ -479,7 +479,7 @@ namespace RTC
 			// Convert to hexadecimal format in uppercase with colons.
 			for (unsigned int i{ 0 }; i < size; ++i)
 			{
-				std::sprintf(hexFingerprint + (i * 3), "%.2X:", binaryFingerprint[i]);
+				std::snprintf(hexFingerprint + (i * 3), 4, "%.2X:", binaryFingerprint[i]);
 			}
 			hexFingerprint[(size * 3) - 1] = '\0';
 
@@ -647,7 +647,7 @@ namespace RTC
 		  localRole == Role::CLIENT || localRole == Role::SERVER,
 		  "local DTLS role must be 'client' or 'server'");
 
-		Role previousLocalRole = this->localRole;
+		const Role previousLocalRole = this->localRole;
 
 		if (localRole == previousLocalRole)
 		{
@@ -702,7 +702,7 @@ namespace RTC
 		}
 	}
 
-	bool DtlsTransport::SetRemoteFingerprint(Fingerprint fingerprint)
+	bool DtlsTransport::SetRemoteFingerprint(const Fingerprint& fingerprint)
 	{
 		MS_TRACE();
 
@@ -860,7 +860,7 @@ namespace RTC
 		MS_TRACE();
 
 		int err;
-		bool wasHandshakeDone = this->handshakeDone;
+		const bool wasHandshakeDone = this->handshakeDone;
 
 		err = SSL_get_error(this->ssl, returnCode);
 
@@ -980,28 +980,25 @@ namespace RTC
 	{
 		MS_TRACE();
 
+		MS_ASSERT(this->ssl, "this->ssl is not set");
 		MS_ASSERT(
 		  this->state == DtlsState::CONNECTING || this->state == DtlsState::CONNECTED,
 		  "invalid DTLS state");
 
-		int64_t ret;
 		uv_timeval_t dtlsTimeout{ 0, 0 };
 		uint64_t timeoutMs;
 
-		// NOTE: No DTLSv_1_2_get_timeout() or DTLS_get_timeout() in OpenSSL 1.1.0-dev.
-		ret = DTLSv1_get_timeout(this->ssl, static_cast<void*>(&dtlsTimeout)); // NOLINT
-
-		if (ret == 0)
-		{
-			OnTimer(this->timer);
-
-			return true;
-		}
+		// DTLSv1_get_timeout queries the next DTLS handshake timeout. If there is
+		// a timeout in progress, it sets *out to the time remaining and returns
+		// one. Otherwise, it returns zero.
+		DTLSv1_get_timeout(this->ssl, static_cast<void*>(&dtlsTimeout)); // NOLINT
 
 		timeoutMs = (dtlsTimeout.tv_sec * static_cast<uint64_t>(1000)) + (dtlsTimeout.tv_usec / 1000);
 
 		if (timeoutMs == 0)
 		{
+			MS_DEBUG_DEV("timeout is 0, calling OnTimer() callback directly");
+
 			OnTimer(this->timer);
 
 			return true;
@@ -1137,7 +1134,7 @@ namespace RTC
 		// Convert to hexadecimal format in uppercase with colons.
 		for (unsigned int i{ 0 }; i < size; ++i)
 		{
-			std::sprintf(hexFingerprint + (i * 3), "%.2X:", binaryFingerprint[i]);
+			std::snprintf(hexFingerprint + (i * 3), 4, "%.2X:", binaryFingerprint[i]);
 		}
 		hexFingerprint[(size * 3) - 1] = '\0';
 
@@ -1345,7 +1342,7 @@ namespace RTC
 	{
 		MS_TRACE();
 
-		int w = where & -SSL_ST_MASK;
+		const int w = where & -SSL_ST_MASK;
 		const char* role;
 
 		if ((w & SSL_ST_CONNECT) != 0)
@@ -1424,11 +1421,21 @@ namespace RTC
 			return;
 		}
 
+		// DTLSv1_handle_timeout is called when a DTLS handshake timeout expires.
+		// If no timeout had expired, it returns 0. Otherwise, it retransmits the
+		// previous flight of handshake messages and returns 1. If too many timeouts
+		// had expired without progress or an error occurs, it returns -1.
 		auto ret = DTLSv1_handle_timeout(this->ssl);
 
-		// -1 means that too many timeouts had expired without progress or an
-		// error occurs.
-		if (ret == -1)
+		if (ret == 1)
+		{
+			// If required, send DTLS data.
+			SendPendingOutgoingDtlsData();
+
+			// Set the DTLS timer again.
+			SetTimeout();
+		}
+		else if (ret == -1)
 		{
 			MS_WARN_TAG(dtls, "DTLSv1_handle_timeout() failed");
 
@@ -1437,14 +1444,6 @@ namespace RTC
 			// Set state and notify the listener.
 			this->state = DtlsState::FAILED;
 			this->listener->OnDtlsTransportFailed(this);
-		}
-		else
-		{
-			// If required, send DTLS data.
-			SendPendingOutgoingDtlsData();
-
-			// Set the DTLS timer again.
-			SetTimeout();
 		}
 	}
 } // namespace RTC

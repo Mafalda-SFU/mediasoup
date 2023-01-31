@@ -3,6 +3,7 @@
 
 #include "Channel/ChannelRequest.hpp"
 #include "RTC/IceCandidate.hpp"
+#include "RTC/Shared.hpp"
 #include "RTC/StunPacket.hpp"
 #include "RTC/TcpConnection.hpp"
 #include "RTC/TcpServer.hpp"
@@ -20,7 +21,8 @@ namespace RTC
 	class WebRtcServer : public RTC::UdpSocket::Listener,
 	                     public RTC::TcpServer::Listener,
 	                     public RTC::TcpConnection::Listener,
-	                     public RTC::WebRtcTransport::WebRtcTransportListener
+	                     public RTC::WebRtcTransport::WebRtcTransportListener,
+	                     public Channel::ChannelSocket::RequestHandler
 	{
 	private:
 		struct ListenInfo
@@ -46,14 +48,17 @@ namespace RTC
 		};
 
 	public:
-		WebRtcServer(const std::string& id, json& data);
+		WebRtcServer(RTC::Shared* shared, const std::string& id, json& data);
 		~WebRtcServer();
 
 	public:
 		void FillJson(json& jsonObject) const;
-		void HandleRequest(Channel::ChannelRequest* request);
 		std::vector<RTC::IceCandidate> GetIceCandidates(
 		  bool enableUdp, bool enableTcp, bool preferUdp, bool preferTcp);
+
+		/* Methods inherited from Channel::ChannelSocket::RequestHandler. */
+	public:
+		void HandleRequest(Channel::ChannelRequest* request) override;
 
 	private:
 		std::string GetLocalIceUsernameFragmentFromReceivedStunPacket(RTC::StunPacket* packet) const;
@@ -93,6 +98,8 @@ namespace RTC
 		const std::string id;
 
 	private:
+		// Passed by argument.
+		RTC::Shared* shared{ nullptr };
 		// Vector of UdpSockets and TcpServers in the user given order.
 		std::vector<UdpSocketOrTcpServer> udpSocketOrTcpServers;
 		// Set of WebRtcTransports.

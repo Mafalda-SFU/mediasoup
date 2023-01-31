@@ -4,24 +4,31 @@
 #include "RTC/DirectTransport.hpp"
 #include "Logger.hpp"
 #include "MediaSoupErrors.hpp"
-#include "PayloadChannel/PayloadChannelNotifier.hpp"
 
 namespace RTC
 {
 	/* Instance methods. */
 
 	// NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
-	DirectTransport::DirectTransport(const std::string& id, RTC::Transport::Listener* listener, json& data)
-	  : RTC::Transport::Transport(id, listener, data)
+	DirectTransport::DirectTransport(
+	  RTC::Shared* shared, const std::string& id, RTC::Transport::Listener* listener, json& data)
+	  : RTC::Transport::Transport(shared, id, listener, data)
 	{
 		MS_TRACE();
+
+		// NOTE: This may throw.
+		this->shared->channelMessageRegistrator->RegisterHandler(
+		  this->id,
+		  /*channelRequestHandler*/ this,
+		  /*payloadChannelRequestHandler*/ this,
+		  /*payloadChannelNotificationHandler*/ this);
 	}
 
 	DirectTransport::~DirectTransport()
 	{
 		MS_TRACE();
 
-		delete[] this->buffer;
+		this->shared->channelMessageRegistrator->UnregisterHandler(this->id);
 	}
 
 	void DirectTransport::FillJson(json& jsonObject) const
@@ -53,13 +60,13 @@ namespace RTC
 		RTC::Transport::HandleRequest(request);
 	}
 
-	void DirectTransport::HandleNotification(PayloadChannel::Notification* notification)
+	void DirectTransport::HandleNotification(PayloadChannel::PayloadChannelNotification* notification)
 	{
 		MS_TRACE();
 
 		switch (notification->eventId)
 		{
-			case PayloadChannel::Notification::EventId::TRANSPORT_SEND_RTCP:
+			case PayloadChannel::PayloadChannelNotification::EventId::TRANSPORT_SEND_RTCP:
 			{
 				const auto* data = notification->payload;
 				auto len         = notification->payloadLen;
@@ -85,78 +92,6 @@ namespace RTC
 
 				// Pass the packet to the parent transport.
 				RTC::Transport::ReceiveRtcpPacket(packet);
-
-				break;
-			}
-
-			case PayloadChannel::Notification::EventId::PRODUCER_SEND:
-			{
-				const auto* data = notification->payload;
-				auto len         = notification->payloadLen;
-
-				// Increase receive transmission.
-				RTC::Transport::DataReceived(len);
-
-				if (len > RTC::MtuSize + 100)
-				{
-					MS_WARN_TAG(rtp, "given RTP packet exceeds maximum size [len:%zu]", len);
-
-					return;
-				}
-
-				// If this is the first time to reveive a RTP packet then allocate the receiving buffer now.
-				if (!this->buffer)
-					this->buffer = new uint8_t[RTC::MtuSize + 100];
-
-				// Copy the received packet into this buffer so it can be expanded later.
-				std::memcpy(this->buffer, data, static_cast<size_t>(len));
-
-				RTC::RtpPacket* packet = RTC::RtpPacket::Parse(this->buffer, len);
-
-				if (!packet)
-				{
-					MS_WARN_TAG(rtp, "received data is not a valid RTP packet");
-
-					return;
-				}
-
-				// Pass the packet to the parent transport.
-				RTC::Transport::ReceiveRtpPacket(packet);
-
-				break;
-			}
-
-			case PayloadChannel::Notification::EventId::DATA_PRODUCER_SEND:
-			{
-				// This may throw.
-				RTC::DataProducer* dataProducer = GetDataProducerFromInternal(notification->internal);
-
-				auto jsonPpidIt = notification->data.find("ppid");
-
-				if (jsonPpidIt == notification->data.end() || !Utils::Json::IsPositiveInteger(*jsonPpidIt))
-				{
-					MS_THROW_TYPE_ERROR("invalid ppid");
-				}
-
-				auto ppid       = jsonPpidIt->get<uint32_t>();
-				const auto* msg = notification->payload;
-				auto len        = notification->payloadLen;
-
-				if (len > this->maxMessageSize)
-				{
-					MS_WARN_TAG(
-					  message,
-					  "given message exceeds maxMessageSize value [maxMessageSize:%zu, len:%zu]",
-					  len,
-					  this->maxMessageSize);
-
-					return;
-				}
-
-				dataProducer->ReceiveMessage(ppid, msg, len);
-
-				// Increase receive transmission.
-				RTC::Transport::DataReceived(len);
 
 				break;
 			}
@@ -190,7 +125,7 @@ namespace RTC
 		size_t len          = packet->GetSize();
 
 		// Notify the Node DirectTransport.
-		PayloadChannel::PayloadChannelNotifier::Emit(consumer->id, "rtp", data, len);
+		this->shared->payloadChannelNotifier->Emit(consumer->id, "rtp", data, len);
 
 		if (cb)
 		{
@@ -210,7 +145,7 @@ namespace RTC
 		size_t len          = packet->GetSize();
 
 		// Notify the Node DirectTransport.
-		PayloadChannel::PayloadChannelNotifier::Emit(this->id, "rtcp", data, len);
+		this->shared->payloadChannelNotifier->Emit(this->id, "rtcp", data, len);
 
 		// Increase send transmission.
 		RTC::Transport::DataSent(len);
@@ -220,11 +155,13 @@ namespace RTC
 	{
 		MS_TRACE();
 
+		packet->Serialize(RTC::RTCP::Buffer);
+
 		const uint8_t* data = packet->GetData();
 		size_t len          = packet->GetSize();
 
 		// Notify the Node DirectTransport.
-		PayloadChannel::PayloadChannelNotifier::Emit(this->id, "rtcp", data, len);
+		this->shared->payloadChannelNotifier->Emit(this->id, "rtcp", data, len);
 
 		// Increase send transmission.
 		RTC::Transport::DataSent(len);
@@ -240,7 +177,7 @@ namespace RTC
 
 		data["ppid"] = ppid;
 
-		PayloadChannel::PayloadChannelNotifier::Emit(dataConsumer->id, "message", data, msg, len);
+		this->shared->payloadChannelNotifier->Emit(dataConsumer->id, "message", data, msg, len);
 
 		// Increase send transmission.
 		RTC::Transport::DataSent(len);

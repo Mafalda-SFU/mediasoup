@@ -117,10 +117,7 @@ namespace RTC
 		           payloadLength + size_t{ payloadPadding },
 		  "packet's computed size does not match received size");
 
-		auto* packet =
-		  new RtpPacket(header, headerExtension, payload, payloadLength, payloadPadding, len);
-
-		return packet;
+		return new RtpPacket(header, headerExtension, payload, payloadLength, payloadPadding, len);
 	}
 
 	/* Instance methods. */
@@ -184,7 +181,10 @@ namespace RTC
 			{
 				for (const auto& extension : this->oneByteExtensions)
 				{
-					extIds.push_back(std::to_string(extension->id));
+					if (extension != nullptr)
+					{
+						extIds.push_back(std::to_string(extension->id));
+					}
 				}
 			}
 			else
@@ -415,14 +415,18 @@ namespace RTC
 			if (type == 1u)
 			{
 				if (extension.id == 0 || extension.id > 14 || extension.len == 0 || extension.len > 16)
+				{
 					continue;
+				}
 
 				extensionsTotalSize += (1 + extension.len);
 			}
 			else if (type == 2u)
 			{
 				if (extension.id == 0)
+				{
 					continue;
+				}
 
 				extensionsTotalSize += (2 + extension.len);
 			}
@@ -430,7 +434,7 @@ namespace RTC
 
 		auto paddedExtensionsTotalSize =
 		  static_cast<size_t>(Utils::Byte::PadTo4Bytes(static_cast<uint16_t>(extensionsTotalSize)));
-		size_t padding = paddedExtensionsTotalSize - extensionsTotalSize;
+		const size_t padding = paddedExtensionsTotalSize - extensionsTotalSize;
 
 		extensionsTotalSize = paddedExtensionsTotalSize;
 
@@ -529,7 +533,7 @@ namespace RTC
 		MS_ASSERT(ptr == this->payload, "wrong ptr calculation");
 	}
 
-	bool RtpPacket::UpdateMid(const std::string& mid)
+	void RtpPacket::UpdateMid(const std::string& mid)
 	{
 		MS_TRACE();
 
@@ -537,25 +541,25 @@ namespace RTC
 		uint8_t* extenValue = GetExtension(this->midExtensionId, extenLen);
 
 		if (!extenValue)
-			return false;
+			return;
+
+		size_t midLen = mid.length();
 
 		// Here we assume that there is MidMaxLength available bytes, even if now
 		// they are padding bytes.
-		if (mid.size() > RTC::MidMaxLength)
+		if (midLen > RTC::MidMaxLength)
 		{
 			MS_ERROR(
 			  "no enough space for MID value [MidMaxLength:%" PRIu8 ", mid:'%s']",
 			  RTC::MidMaxLength,
 			  mid.c_str());
 
-			return false;
+			return;
 		}
 
-		std::memcpy(extenValue, mid.c_str(), mid.size());
+		std::memcpy(extenValue, mid.c_str(), midLen);
 
-		SetExtensionLength(this->midExtensionId, mid.size());
-
-		return true;
+		SetExtensionLength(this->midExtensionId, midLen);
 	}
 
 	/**
@@ -833,7 +837,7 @@ namespace RTC
 			MS_ASSERT(shift <= (this->payloadLength - payloadOffset), "shift too big");
 
 		uint8_t* payloadOffsetPtr = this->payload + payloadOffset;
-		size_t shiftedLen;
+		size_t shiftedLen{ 0 };
 
 		if (expand)
 		{
@@ -872,8 +876,8 @@ namespace RTC
 			// One-Byte extensions cannot have length 0.
 			while (ptr < extensionEnd)
 			{
-				uint8_t id = (*ptr & 0xF0) >> 4;
-				size_t len = static_cast<size_t>(*ptr & 0x0F) + 1;
+				const uint8_t id = (*ptr & 0xF0) >> 4;
+				const size_t len = static_cast<size_t>(*ptr & 0x0F) + 1;
 
 				// id=15 in One-Byte extensions means "stop parsing here".
 				if (id == 15u)
@@ -925,8 +929,8 @@ namespace RTC
 			// Two-Byte extensions can have length 0.
 			while (ptr + 1 < extensionEnd)
 			{
-				uint8_t id  = *ptr;
-				uint8_t len = *(ptr + 1);
+				const uint8_t id  = *ptr;
+				const uint8_t len = *(ptr + 1);
 
 				// Valid extension id.
 				if (id != 0u)

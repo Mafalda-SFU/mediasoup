@@ -4,6 +4,7 @@
 #include "RTC/DtlsTransport.hpp"
 #include "RTC/IceCandidate.hpp"
 #include "RTC/IceServer.hpp"
+#include "RTC/Shared.hpp"
 #include "RTC/SrtpSession.hpp"
 #include "RTC/StunPacket.hpp"
 #include "RTC/TcpConnection.hpp"
@@ -49,8 +50,10 @@ namespace RTC
 		};
 
 	public:
-		WebRtcTransport(const std::string& id, RTC::Transport::Listener* listener, json& data);
 		WebRtcTransport(
+		  RTC::Shared* shared, const std::string& id, RTC::Transport::Listener* listener, json& data);
+		WebRtcTransport(
+		  RTC::Shared* shared,
 		  const std::string& id,
 		  RTC::Transport::Listener* listener,
 		  WebRtcTransportListener* webRtcTransportListener,
@@ -61,12 +64,18 @@ namespace RTC
 	public:
 		void FillJson(json& jsonObject) const override;
 		void FillJsonStats(json& jsonArray) override;
-		void HandleRequest(Channel::ChannelRequest* request) override;
-		void HandleNotification(PayloadChannel::Notification* notification) override;
 		void ProcessStunPacketFromWebRtcServer(RTC::TransportTuple* tuple, RTC::StunPacket* packet);
 		void ProcessNonStunPacketFromWebRtcServer(
 		  RTC::TransportTuple* tuple, const uint8_t* data, size_t len);
 		void RemoveTuple(RTC::TransportTuple* tuple);
+
+		/* Methods inherited from Channel::ChannelSocket::RequestHandler. */
+	public:
+		void HandleRequest(Channel::ChannelRequest* request) override;
+
+		/* Methods inherited from PayloadChannel::PayloadChannelSocket::NotificationHandler. */
+	public:
+		void HandleNotification(PayloadChannel::PayloadChannelNotification* notification) override;
 
 	private:
 		bool IsConnected() const override;

@@ -3,13 +3,18 @@
 
 #include "common.hpp"
 #include "Channel/ChannelRequest.hpp"
+#include "Channel/ChannelSocket.hpp"
+#include "PayloadChannel/PayloadChannelSocket.hpp"
+#include "RTC/RTCP/Packet.hpp"
 #include "RTC/SctpDictionaries.hpp"
+#include "RTC/Shared.hpp"
 #include <nlohmann/json.hpp>
 #include <string>
 
 namespace RTC
 {
-	class DataProducer
+	class DataProducer : public Channel::ChannelSocket::RequestHandler,
+	                     public PayloadChannel::PayloadChannelSocket::NotificationHandler
 	{
 	public:
 		class Listener
@@ -18,6 +23,7 @@ namespace RTC
 			virtual ~Listener() = default;
 
 		public:
+			virtual void OnDataProducerReceiveData(RTC::DataProducer* producer, size_t len) = 0;
 			virtual void OnDataProducerMessageReceived(
 			  RTC::DataProducer* dataProducer, uint32_t ppid, const uint8_t* msg, size_t len) = 0;
 		};
@@ -30,13 +36,17 @@ namespace RTC
 		};
 
 	public:
-		DataProducer(const std::string& id, RTC::DataProducer::Listener* listener, json& data);
+		DataProducer(
+		  RTC::Shared* shared,
+		  const std::string& id,
+		  size_t maxMessageSize,
+		  RTC::DataProducer::Listener* listener,
+		  json& data);
 		virtual ~DataProducer();
 
 	public:
 		void FillJson(json& jsonObject) const;
 		void FillJsonStats(json& jsonArray) const;
-		void HandleRequest(Channel::ChannelRequest* request) const;
 		Type GetType() const
 		{
 			return this->type;
@@ -47,12 +57,22 @@ namespace RTC
 		}
 		void ReceiveMessage(uint32_t ppid, const uint8_t* msg, size_t len);
 
+		/* Methods inherited from Channel::ChannelSocket::RequestHandler. */
+	public:
+		void HandleRequest(Channel::ChannelRequest* request) override;
+
+		/* Methods inherited from PayloadChannel::PayloadChannelSocket::NotificationHandler. */
+	public:
+		void HandleNotification(PayloadChannel::PayloadChannelNotification* notification) override;
+
 	public:
 		// Passed by argument.
 		const std::string id;
 
 	private:
 		// Passed by argument.
+		RTC::Shared* shared{ nullptr };
+		size_t maxMessageSize{ 0u };
 		RTC::DataProducer::Listener* listener{ nullptr };
 		// Others.
 		Type type;

@@ -38,7 +38,12 @@ namespace RTC
 
 	RtpStreamSend::StorageItem* RtpStreamSend::StorageItemBuffer::GetFirst() const
 	{
-		return this->Get(this->startSeq);
+		auto* storageItem = this->Get(this->startSeq);
+
+		MS_ASSERT(storageItem, "first storage item is missing");
+		MS_ASSERT(storageItem->packet, "storage item does not contain original packet");
+
+		return storageItem;
 	}
 
 	RtpStreamSend::StorageItem* RtpStreamSend::StorageItemBuffer::Get(uint16_t seq) const
@@ -194,20 +199,20 @@ namespace RTC
 		this->rtxSeq = Utils::Crypto::GetRandomUInt(0u, 0xFFFF);
 	}
 
-	bool RtpStreamSend::ReceivePacket(std::shared_ptr<RTC::RtpPacket> packet)
+	bool RtpStreamSend::ReceivePacket(RTC::RtpPacket* packet, std::shared_ptr<RTC::RtpPacket>& sharedPacket)
 	{
 		MS_TRACE();
 
 		// Call the parent method.
-		if (!RtpStream::ReceiveStreamPacket(packet.get()))
+		if (!RtpStream::ReceiveStreamPacket(packet))
 			return false;
 
 		// If NACK is enabled, store the packet into the buffer.
 		if (this->params.useNack)
-			StorePacket(packet);
+			StorePacket(packet, sharedPacket);
 
 		// Increase transmission counter.
-		this->transmissionCounter.Update(packet.get());
+		this->transmissionCounter.Update(packet);
 
 		return true;
 	}
@@ -280,16 +285,16 @@ namespace RTC
 		/* Calculate RTT. */
 
 		// Get the NTP representation of the current timestamp.
-		uint64_t nowMs = DepLibUV::GetTimeMs();
-		auto ntp       = Utils::Time::TimeMs2Ntp(nowMs);
+		const uint64_t nowMs = DepLibUV::GetTimeMs();
+		auto ntp             = Utils::Time::TimeMs2Ntp(nowMs);
 
 		// Get the compact NTP representation of the current timestamp.
 		uint32_t compactNtp = (ntp.seconds & 0x0000FFFF) << 16;
 
 		compactNtp |= (ntp.fractions & 0xFFFF0000) >> 16;
 
-		uint32_t lastSr = report->GetLastSenderReport();
-		uint32_t dlsr   = report->GetDelaySinceLastSenderReport();
+		const uint32_t lastSr = report->GetLastSenderReport();
+		const uint32_t dlsr   = report->GetDelaySinceLastSenderReport();
 
 		// RTT in 1/2^16 second fractions.
 		uint32_t rtt{ 0 };
@@ -433,7 +438,7 @@ namespace RTC
 		MS_ABORT("invalid method call");
 	}
 
-	void RtpStreamSend::StorePacket(std::shared_ptr<RTC::RtpPacket> packet)
+	void RtpStreamSend::StorePacket(RTC::RtpPacket* packet, std::shared_ptr<RTC::RtpPacket>& sharedPacket)
 	{
 		MS_TRACE();
 
@@ -452,7 +457,23 @@ namespace RTC
 			return;
 		}
 
-		this->ClearOldPackets(packet.get());
+		// Check if RTP packet is too old to be stored.
+		if (this->storageItemBuffer.GetBufferSize() > 0)
+		{
+			auto* storageItem = this->storageItemBuffer.GetFirst();
+
+			// Processing RTP packet is older than first one.
+			if (RTC::SeqManager<uint32_t>::IsSeqLowerThan(packet->GetTimestamp(), storageItem->timestamp))
+			{
+				uint32_t diffTs{ storageItem->timestamp - packet->GetTimestamp() };
+
+				// RTP packet is older than the retransmission buffer size.
+				if (static_cast<uint32_t>(diffTs * 1000 / this->params.clockRate) >= this->retransmissionBufferSize)
+					return;
+			}
+		}
+
+		this->ClearOldPackets(packet);
 
 		auto seq          = packet->GetSequenceNumber();
 		auto* storageItem = this->storageItemBuffer.Get(seq);
@@ -476,8 +497,14 @@ namespace RTC
 			this->storageItemBuffer.Insert(seq, storageItem);
 		}
 
+		// Only clone once and only if necessary.
+		if (!sharedPacket.get())
+		{
+			sharedPacket.reset(packet->Clone());
+		}
+
 		// Store original packet and some extra info into the storage item.
-		storageItem->packet         = packet;
+		storageItem->packet         = sharedPacket;
 		storageItem->ssrc           = packet->GetSsrc();
 		storageItem->sequenceNumber = packet->GetSequenceNumber();
 		storageItem->timestamp      = packet->GetTimestamp();
@@ -487,7 +514,6 @@ namespace RTC
 	{
 		MS_TRACE();
 
-		auto packetTs{ packet->GetTimestamp() };
 		auto clockRate{ this->params.clockRate };
 
 		const auto bufferSize = this->storageItemBuffer.GetBufferSize();
@@ -496,16 +522,11 @@ namespace RTC
 		// items that contain packets older than `MaxRetransmissionDelay`.
 		for (size_t i{ 0 }; i < bufferSize && this->storageItemBuffer.GetBufferSize() != 0; ++i)
 		{
-			auto* firstStorageItem = this->storageItemBuffer.GetFirst();
+			auto* storageItem = this->storageItemBuffer.GetFirst();
+			uint32_t diffTs{ packet->GetTimestamp() - storageItem->timestamp };
 
-			MS_ASSERT(firstStorageItem, "first storage item is missing");
-			MS_ASSERT(firstStorageItem->packet, "storage item does not contain original packet");
-
-			auto firstPacketTs{ firstStorageItem->timestamp };
-			uint32_t diffTs{ packetTs - firstPacketTs };
-
-			// RTP packet is older than first RTP packet.
-			if (RTC::SeqManager<uint32_t>::IsSeqLowerThan(packetTs, firstPacketTs))
+			// Processing RTP packet is older than first one.
+			if (RTC::SeqManager<uint32_t>::IsSeqLowerThan(packet->GetTimestamp(), storageItem->timestamp))
 				break;
 
 			// First RTP packet is recent enough.
@@ -546,14 +567,14 @@ namespace RTC
 		}
 
 		// Look for each requested packet.
-		uint64_t nowMs      = DepLibUV::GetTimeMs();
-		uint16_t rtt        = (this->rtt != 0u ? this->rtt : DefaultRtt);
-		uint16_t currentSeq = seq;
+		const uint64_t nowMs = DepLibUV::GetTimeMs();
+		const uint16_t rtt   = (this->rtt != 0u ? this->rtt : DefaultRtt);
+		uint16_t currentSeq  = seq;
 		bool requested{ true };
 		size_t containerIdx{ 0 };
 
 		// Variables for debugging.
-		uint16_t origBitmask = bitmask;
+		const uint16_t origBitmask = bitmask;
 		uint16_t sentBitmask{ 0b0000000000000000 };
 		bool isFirstPacket{ true };
 		bool firstPacketSent{ false };
@@ -703,7 +724,7 @@ namespace RTC
 		this->sentPriorScore = totalSent;
 
 		// Calculate number of packets lost in this interval.
-		uint32_t totalLost = report->GetTotalLost() > 0 ? report->GetTotalLost() : 0;
+		const uint32_t totalLost = report->GetTotalLost() > 0 ? report->GetTotalLost() : 0;
 		uint32_t lost;
 
 		if (totalLost < this->lostPriorScore)
@@ -720,8 +741,8 @@ namespace RTC
 		this->repairedPriorScore = totalRepaired;
 
 		// Calculate number of packets retransmitted in this interval.
-		auto totatRetransmitted = this->packetsRetransmitted;
-		uint32_t retransmitted  = totatRetransmitted - this->retransmittedPriorScore;
+		auto totatRetransmitted      = this->packetsRetransmitted;
+		const uint32_t retransmitted = totatRetransmitted - this->retransmittedPriorScore;
 
 		this->retransmittedPriorScore = totatRetransmitted;
 

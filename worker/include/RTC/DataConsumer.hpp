@@ -3,14 +3,22 @@
 
 #include "common.hpp"
 #include "Channel/ChannelRequest.hpp"
+#include "Channel/ChannelSocket.hpp"
 #include "PayloadChannel/PayloadChannelRequest.hpp"
+#include "PayloadChannel/PayloadChannelSocket.hpp"
 #include "RTC/SctpDictionaries.hpp"
+#include "RTC/Shared.hpp"
 #include <nlohmann/json.hpp>
 #include <string>
 
 namespace RTC
 {
-	class DataConsumer
+	// Define class here such that we can use it even though we don't know what it looks like yet
+	// (this is to avoid circular dependencies).
+	class SctpAssociation;
+
+	class DataConsumer : public Channel::ChannelSocket::RequestHandler,
+	                     public PayloadChannel::PayloadChannelSocket::RequestHandler
 	{
 	protected:
 		using onQueuedCallback = const std::function<void(bool queued, bool sctpSendBufferFull)>;
@@ -40,8 +48,10 @@ namespace RTC
 
 	public:
 		DataConsumer(
+		  RTC::Shared* shared,
 		  const std::string& id,
 		  const std::string& dataProducerId,
+		  RTC::SctpAssociation* sctpAssociation,
 		  RTC::DataConsumer::Listener* listener,
 		  json& data,
 		  size_t maxMessageSize);
@@ -50,8 +60,6 @@ namespace RTC
 	public:
 		void FillJson(json& jsonObject) const;
 		void FillJsonStats(json& jsonArray) const;
-		void HandleRequest(Channel::ChannelRequest* request);
-		void HandleRequest(PayloadChannel::PayloadChannelRequest* request);
 		Type GetType() const
 		{
 			return this->type;
@@ -75,8 +83,17 @@ namespace RTC
 		void SctpAssociationConnected();
 		void SctpAssociationClosed();
 		void SctpAssociationBufferedAmount(uint32_t bufferedAmount);
+		void SctpAssociationSendBufferFull();
 		void DataProducerClosed();
 		void SendMessage(uint32_t ppid, const uint8_t* msg, size_t len, onQueuedCallback* = nullptr);
+
+		/* Methods inherited from Channel::ChannelSocket::RequestHandler. */
+	public:
+		void HandleRequest(Channel::ChannelRequest* request) override;
+
+		/* Methods inherited from PayloadChannel::PayloadChannelSocket::RequestHandler. */
+	public:
+		void HandleRequest(PayloadChannel::PayloadChannelRequest* request) override;
 
 	public:
 		// Passed by argument.
@@ -85,6 +102,8 @@ namespace RTC
 
 	private:
 		// Passed by argument.
+		RTC::Shared* shared{ nullptr };
+		RTC::SctpAssociation* sctpAssociation{ nullptr };
 		RTC::DataConsumer::Listener* listener{ nullptr };
 		size_t maxMessageSize{ 0u };
 		// Others.

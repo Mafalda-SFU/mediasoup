@@ -3,7 +3,7 @@
 
 #include "common.hpp"
 #include "Channel/ChannelRequest.hpp"
-#include "PayloadChannel/Notification.hpp"
+#include "PayloadChannel/PayloadChannelNotification.hpp"
 #include "PayloadChannel/PayloadChannelRequest.hpp"
 #include "RTC/Consumer.hpp"
 #include "RTC/DataConsumer.hpp"
@@ -12,6 +12,7 @@
 #include "RTC/RtpObserver.hpp"
 #include "RTC/RtpPacket.hpp"
 #include "RTC/RtpStream.hpp"
+#include "RTC/Shared.hpp"
 #include "RTC/Transport.hpp"
 #include "RTC/WebRtcServer.hpp"
 #include <absl/container/flat_hash_map.h>
@@ -23,7 +24,9 @@ using json = nlohmann::json;
 
 namespace RTC
 {
-	class Router : public RTC::Transport::Listener
+	class Router : public RTC::Transport::Listener,
+	               public RTC::RtpObserver::Listener,
+	               public Channel::ChannelSocket::RequestHandler
 	{
 	public:
 		class Listener
@@ -37,21 +40,21 @@ namespace RTC
 		};
 
 	public:
-		explicit Router(const std::string& id, Listener* listener);
+		explicit Router(RTC::Shared* shared, const std::string& id, Listener* listener);
 		virtual ~Router();
 
 	public:
 		void FillJson(json& jsonObject) const;
-		void HandleRequest(Channel::ChannelRequest* request);
-		void HandleRequest(PayloadChannel::PayloadChannelRequest* request);
-		void HandleNotification(PayloadChannel::Notification* notification);
+
+		/* Methods inherited from Channel::ChannelSocket::RequestHandler. */
+	public:
+		void HandleRequest(Channel::ChannelRequest* request) override;
 
 	private:
-		void SetNewTransportIdFromInternal(json& internal, std::string& transportId) const;
-		RTC::Transport* GetTransportFromInternal(json& internal) const;
-		void SetNewRtpObserverIdFromInternal(json& internal, std::string& rtpObserverId) const;
-		RTC::RtpObserver* GetRtpObserverFromInternal(json& internal) const;
-		RTC::Producer* GetProducerFromData(json& data) const;
+		void SetNewTransportIdFromData(json& data, std::string& transportId) const;
+		RTC::Transport* GetTransportFromData(json& data) const;
+		void SetNewRtpObserverIdFromData(json& data, std::string& rtpObserverId) const;
+		RTC::RtpObserver* GetRtpObserverFromData(json& data) const;
 
 		/* Pure virtual methods inherited from RTC::Transport::Listener. */
 	public:
@@ -100,12 +103,20 @@ namespace RTC
 		  RTC::Transport* transport, RTC::DataConsumer* dataConsumer) override;
 		void OnTransportListenServerClosed(RTC::Transport* transport) override;
 
+		/* Pure virtual methods inherited from RTC::RtpObserver::Listener. */
+	public:
+		RTC::Producer* RtpObserverGetProducer(RTC::RtpObserver*, const std::string& id) override;
+		void OnRtpObserverAddProducer(RTC::RtpObserver* rtpObserver, RTC::Producer* producer) override;
+		void OnRtpObserverRemoveProducer(RTC::RtpObserver* rtpObserver, RTC::Producer* producer) override;
+
 	public:
 		// Passed by argument.
 		const std::string id;
-		Listener* listener{ nullptr };
 
 	private:
+		// Passed by argument.
+		RTC::Shared* shared{ nullptr };
+		Listener* listener{ nullptr };
 		// Allocated by this.
 		absl::flat_hash_map<std::string, RTC::Transport*> mapTransports;
 		absl::flat_hash_map<std::string, RTC::RtpObserver*> mapRtpObservers;

@@ -5,7 +5,6 @@
 #include "Logger.hpp"
 #include "MediaSoupErrors.hpp"
 #include "Utils.hpp"
-#include "Channel/ChannelNotifier.hpp"
 #include <cmath> // std::pow()
 
 namespace RTC
@@ -28,7 +27,8 @@ namespace RTC
 
 	/* Instance methods. */
 
-	WebRtcServer::WebRtcServer(const std::string& id, json& data) : id(id)
+	WebRtcServer::WebRtcServer(RTC::Shared* shared, const std::string& id, json& data)
+	  : id(id), shared(shared)
 	{
 		MS_TRACE();
 
@@ -93,14 +93,18 @@ namespace RTC
 				listenInfo.announcedIp.assign(jsonAnnouncedIpIt->get<std::string>());
 			}
 
+			uint16_t port{ 0 };
 			auto jsonPortIt = jsonListenInfo.find("port");
 
-			if (jsonPortIt == jsonListenInfo.end())
-				MS_THROW_TYPE_ERROR("missing listenInfo.port");
-			else if (!(jsonPortIt->is_number() && Utils::Json::IsPositiveInteger(*jsonPortIt)))
-				MS_THROW_TYPE_ERROR("wrong listenInfo.port (not a positive number)");
+			if (jsonPortIt != jsonListenInfo.end())
+			{
+				if (!(jsonPortIt->is_number() && Utils::Json::IsPositiveInteger(*jsonPortIt)))
+					MS_THROW_TYPE_ERROR("wrong port (not a positive number)");
 
-			listenInfo.port = jsonPortIt->get<uint16_t>();
+				port = jsonPortIt->get<uint16_t>();
+			}
+
+			listenInfo.port = port;
 		}
 
 		try
@@ -110,18 +114,35 @@ namespace RTC
 				if (listenInfo.protocol == RTC::TransportTuple::Protocol::UDP)
 				{
 					// This may throw.
-					auto* udpSocket = new RTC::UdpSocket(this, listenInfo.ip, listenInfo.port);
+					RTC::UdpSocket* udpSocket;
+
+					if (listenInfo.port != 0)
+						udpSocket = new RTC::UdpSocket(this, listenInfo.ip, listenInfo.port);
+					else
+						udpSocket = new RTC::UdpSocket(this, listenInfo.ip);
 
 					this->udpSocketOrTcpServers.emplace_back(udpSocket, nullptr, listenInfo.announcedIp);
 				}
 				else if (listenInfo.protocol == RTC::TransportTuple::Protocol::TCP)
 				{
 					// This may throw.
-					auto* tcpServer = new RTC::TcpServer(this, this, listenInfo.ip, listenInfo.port);
+					RTC::TcpServer* tcpServer;
+
+					if (listenInfo.port != 0)
+						tcpServer = new RTC::TcpServer(this, this, listenInfo.ip, listenInfo.port);
+					else
+						tcpServer = new RTC::TcpServer(this, this, listenInfo.ip);
 
 					this->udpSocketOrTcpServers.emplace_back(nullptr, tcpServer, listenInfo.announcedIp);
 				}
 			}
+
+			// NOTE: This may throw.
+			this->shared->channelMessageRegistrator->RegisterHandler(
+			  this->id,
+			  /*channelRequestHandler*/ this,
+			  /*payloadChannelRequestHandler*/ nullptr,
+			  /*payloadChannelNotificationHandler*/ nullptr);
 		}
 		catch (const MediaSoupError& error)
 		{
@@ -144,6 +165,8 @@ namespace RTC
 	WebRtcServer::~WebRtcServer()
 	{
 		MS_TRACE();
+
+		this->shared->channelMessageRegistrator->UnregisterHandler(this->id);
 
 		for (auto& item : this->udpSocketOrTcpServers)
 		{
@@ -337,7 +360,7 @@ namespace RTC
 		// before the ":" symbol.
 
 		auto& username  = packet->GetUsername();
-		size_t colonPos = username.find(":");
+		size_t colonPos = username.find(':');
 
 		// If no colon is found just return the whole USERNAME attribute anyway.
 		if (colonPos == std::string::npos)

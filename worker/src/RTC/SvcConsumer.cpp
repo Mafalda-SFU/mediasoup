@@ -6,7 +6,6 @@
 #include "Logger.hpp"
 #include "MediaSoupErrors.hpp"
 #include "Utils.hpp"
-#include "Channel/ChannelNotifier.hpp"
 #include "RTC/Codecs/Tools.hpp"
 
 namespace RTC
@@ -19,8 +18,12 @@ namespace RTC
 	/* Instance methods. */
 
 	SvcConsumer::SvcConsumer(
-	  const std::string& id, const std::string& producerId, RTC::Consumer::Listener* listener, json& data)
-	  : RTC::Consumer::Consumer(id, producerId, listener, data, RTC::RtpParameters::Type::SVC)
+	  RTC::Shared* shared,
+	  const std::string& id,
+	  const std::string& producerId,
+	  RTC::Consumer::Listener* listener,
+	  json& data)
+	  : RTC::Consumer::Consumer(shared, id, producerId, listener, data, RTC::RtpParameters::Type::SVC)
 	{
 		MS_TRACE();
 
@@ -102,11 +105,20 @@ namespace RTC
 
 		// Create RtpStreamSend instance for sending a single stream to the remote.
 		CreateRtpStream();
+
+		// NOTE: This may throw.
+		this->shared->channelMessageRegistrator->RegisterHandler(
+		  this->id,
+		  /*channelRequestHandler*/ this,
+		  /*payloadChannelRequestHandler*/ nullptr,
+		  /*payloadChannelNotificationHandler*/ nullptr);
 	}
 
 	SvcConsumer::~SvcConsumer()
 	{
 		MS_TRACE();
+
+		this->shared->channelMessageRegistrator->UnregisterHandler(this->id);
 
 		delete this->rtpStream;
 	}
@@ -532,7 +544,7 @@ namespace RTC
 		return desiredBitrate;
 	}
 
-	void SvcConsumer::SendRtpPacket(std::shared_ptr<RTC::RtpPacket> packet)
+	void SvcConsumer::SendRtpPacket(RTC::RtpPacket* packet, std::shared_ptr<RTC::RtpPacket>& sharedPacket)
 	{
 		MS_TRACE();
 
@@ -553,7 +565,7 @@ namespace RTC
 
 		// NOTE: This may happen if this Consumer supports just some codecs of those
 		// in the corresponding Producer.
-		if (this->supportedCodecPayloadTypes.find(payloadType) == this->supportedCodecPayloadTypes.end())
+		if (!this->supportedCodecPayloadTypes[payloadType])
 		{
 			MS_DEBUG_DEV("payload type not supported [payloadType:%" PRIu8 "]", payloadType);
 
@@ -565,7 +577,7 @@ namespace RTC
 			return;
 
 		// Whether this is the first packet after re-sync.
-		bool isSyncPacket = this->syncRequired;
+		const bool isSyncPacket = this->syncRequired;
 
 		// Sync sequence number and timestamp if required.
 		if (isSyncPacket)
@@ -574,6 +586,7 @@ namespace RTC
 				MS_DEBUG_TAG(rtp, "sync key frame received");
 
 			this->rtpSeqManager.Sync(packet->GetSequenceNumber() - 1);
+			this->encodingContext->SyncRequired();
 
 			this->syncRequired = false;
 		}
@@ -582,7 +595,7 @@ namespace RTC
 		auto previousTemporalLayer = this->encodingContext->GetCurrentTemporalLayer();
 
 		bool marker{ false };
-		bool origMarker = packet->HasMarker();
+		const bool origMarker = packet->HasMarker();
 
 		if (!packet->ProcessPayload(this->encodingContext.get(), marker))
 		{
@@ -633,13 +646,13 @@ namespace RTC
 		}
 
 		// Process the packet.
-		if (this->rtpStream->ReceivePacket(packet))
+		if (this->rtpStream->ReceivePacket(packet, sharedPacket))
 		{
 			// Send the packet.
-			this->listener->OnConsumerSendRtpPacket(this, packet.get());
+			this->listener->OnConsumerSendRtpPacket(this, packet);
 
 			// May emit 'trace' event.
-			EmitTraceEventRtpAndKeyFrameTypes(packet.get());
+			EmitTraceEventRtpAndKeyFrameTypes(packet);
 		}
 		else
 		{
@@ -663,39 +676,38 @@ namespace RTC
 		packet->RestorePayload();
 	}
 
-	void SvcConsumer::GetRtcp(
-	  RTC::RTCP::CompoundPacket* packet, RTC::RtpStreamSend* rtpStream, uint64_t nowMs)
+	bool SvcConsumer::GetRtcp(RTC::RTCP::CompoundPacket* packet, uint64_t nowMs)
 	{
 		MS_TRACE();
 
-		MS_ASSERT(rtpStream == this->rtpStream, "RTP stream does not match");
-
 		if (static_cast<float>((nowMs - this->lastRtcpSentTime) * 1.15) < this->maxRtcpInterval)
-			return;
+			return true;
 
-		auto* report = this->rtpStream->GetRtcpSenderReport(nowMs);
+		auto* senderReport = this->rtpStream->GetRtcpSenderReport(nowMs);
 
-		if (!report)
-			return;
-
-		packet->AddSenderReport(report);
+		if (!senderReport)
+			return true;
 
 		// Build SDES chunk for this sender.
 		auto* sdesChunk = this->rtpStream->GetRtcpSdesChunk();
 
-		packet->AddSdesChunk(sdesChunk);
+		RTC::RTCP::DelaySinceLastRr* delaySinceLastRrReport{ nullptr };
 
 		auto* dlrr = this->rtpStream->GetRtcpXrDelaySinceLastRr(nowMs);
 
 		if (dlrr)
 		{
-			auto* report = new RTC::RTCP::DelaySinceLastRr();
-
-			report->AddSsrcInfo(dlrr);
-			packet->AddDelaySinceLastRr(report);
+			delaySinceLastRrReport = new RTC::RTCP::DelaySinceLastRr();
+			delaySinceLastRrReport->AddSsrcInfo(dlrr);
 		}
 
+		// RTCP Compound packet buffer cannot hold the data.
+		if (!packet->Add(senderReport, sdesChunk, delaySinceLastRrReport))
+			return false;
+
 		this->lastRtcpSentTime = nowMs;
+
+		return true;
 	}
 
 	void SvcConsumer::NeedWorstRemoteFractionLost(uint32_t /*mappedSsrc*/, uint8_t& worstRemoteFractionLost)
@@ -1067,7 +1079,7 @@ namespace RTC
 
 		FillJsonScore(data);
 
-		Channel::ChannelNotifier::Emit(this->id, "score", data);
+		this->shared->channelNotifier->Emit(this->id, "score", data);
 	}
 
 	inline void SvcConsumer::EmitLayersChange() const
@@ -1092,7 +1104,7 @@ namespace RTC
 			data = nullptr;
 		}
 
-		Channel::ChannelNotifier::Emit(this->id, "layerschange", data);
+		this->shared->channelNotifier->Emit(this->id, "layerschange", data);
 	}
 
 	inline void SvcConsumer::OnRtpStreamScore(

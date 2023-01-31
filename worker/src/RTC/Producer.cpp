@@ -6,7 +6,6 @@
 #include "Logger.hpp"
 #include "MediaSoupErrors.hpp"
 #include "Utils.hpp"
-#include "Channel/ChannelNotifier.hpp"
 #include "RTC/Codecs/Tools.hpp"
 #include "RTC/RTCP/FeedbackPs.hpp"
 #include "RTC/RTCP/FeedbackRtp.hpp"
@@ -18,14 +17,19 @@
 
 namespace RTC
 {
+	/* Static variables. */
+
+	thread_local uint8_t* Producer::buffer{ nullptr };
+
 	/* Static. */
 
 	static constexpr unsigned int SendNackDelay{ 10u }; // In ms.
 
 	/* Instance methods. */
 
-	Producer::Producer(const std::string& id, RTC::Producer::Listener* listener, json& data)
-	  : id(id), listener(listener)
+	Producer::Producer(
+	  RTC::Shared* shared, const std::string& id, RTC::Producer::Listener* listener, json& data)
+	  : id(id), shared(shared), listener(listener)
 	{
 		MS_TRACE();
 
@@ -309,11 +313,20 @@ namespace RTC
 
 			this->keyFrameRequestManager = new RTC::KeyFrameRequestManager(this, keyFrameRequestDelay);
 		}
+
+		// NOTE: This may throw.
+		this->shared->channelMessageRegistrator->RegisterHandler(
+		  this->id,
+		  /*channelRequestHandler*/ this,
+		  /*payloadChannelRequestHandler*/ nullptr,
+		  /*payloadChannelNotificationHandler*/ this);
 	}
 
 	Producer::~Producer()
 	{
 		MS_TRACE();
+
+		this->shared->channelMessageRegistrator->UnregisterHandler(this->id);
 
 		// Delete all streams.
 		for (auto& kv : this->mapSsrcRtpStream)
@@ -605,6 +618,56 @@ namespace RTC
 		}
 	}
 
+	void Producer::HandleNotification(PayloadChannel::PayloadChannelNotification* notification)
+	{
+		MS_TRACE();
+
+		switch (notification->eventId)
+		{
+			case PayloadChannel::PayloadChannelNotification::EventId::PRODUCER_SEND:
+			{
+				const auto* data = notification->payload;
+				auto len         = notification->payloadLen;
+
+				// Increase receive transmission.
+				this->listener->OnProducerReceiveData(this, len);
+
+				if (len > RTC::MtuSize + 100)
+				{
+					MS_WARN_TAG(rtp, "given RTP packet exceeds maximum size [len:%zu]", len);
+
+					break;
+				}
+
+				// If this is the first time to receive a RTP packet then allocate the receiving buffer now.
+				if (!Producer::buffer)
+					Producer::buffer = new uint8_t[RTC::MtuSize + 100];
+
+				// Copy the received packet into this buffer so it can be expanded later.
+				std::memcpy(Producer::buffer, data, static_cast<size_t>(len));
+
+				RTC::RtpPacket* packet = RTC::RtpPacket::Parse(Producer::buffer, len);
+
+				if (!packet)
+				{
+					MS_WARN_TAG(rtp, "received data is not a valid RTP packet");
+
+					break;
+				}
+
+				// Pass the packet to the parent transport.
+				this->listener->OnProducerReceiveRtpPacket(this, packet);
+
+				break;
+			}
+
+			default:
+			{
+				MS_ERROR("unknown event '%s'", notification->event.c_str());
+			}
+		}
+	}
+
 	Producer::ReceiveRtpPacketResult Producer::ReceiveRtpPacket(RTC::RtpPacket* packet)
 	{
 		MS_TRACE();
@@ -761,38 +824,46 @@ namespace RTC
 		rtpStream->ReceiveRtcpXrDelaySinceLastRr(ssrcInfo);
 	}
 
-	void Producer::GetRtcp(RTC::RTCP::CompoundPacket* packet, uint64_t nowMs)
+	bool Producer::GetRtcp(RTC::RTCP::CompoundPacket* packet, uint64_t nowMs)
 	{
 		MS_TRACE();
 
 		if (static_cast<float>((nowMs - this->lastRtcpSentTime) * 1.15) < this->maxRtcpInterval)
-			return;
+			return true;
+
+		std::vector<RTCP::ReceiverReport*> receiverReports;
+		RTCP::ReceiverReferenceTime* receiverReferenceTimeReport{ nullptr };
 
 		for (auto& kv : this->mapSsrcRtpStream)
 		{
 			auto* rtpStream = kv.second;
 			auto* report    = rtpStream->GetRtcpReceiverReport();
 
-			packet->AddReceiverReport(report);
+			receiverReports.push_back(report);
 
 			auto* rtxReport = rtpStream->GetRtxRtcpReceiverReport();
 
 			if (rtxReport)
-				packet->AddReceiverReport(rtxReport);
+				receiverReports.push_back(rtxReport);
 		}
 
 		// Add a receiver reference time report if no present in the packet.
 		if (!packet->HasReceiverReferenceTime())
 		{
-			auto ntp     = Utils::Time::TimeMs2Ntp(nowMs);
-			auto* report = new RTC::RTCP::ReceiverReferenceTime();
+			auto ntp                    = Utils::Time::TimeMs2Ntp(nowMs);
+			receiverReferenceTimeReport = new RTC::RTCP::ReceiverReferenceTime();
 
-			report->SetNtpSec(ntp.seconds);
-			report->SetNtpFrac(ntp.fractions);
-			packet->AddReceiverReferenceTime(report);
+			receiverReferenceTimeReport->SetNtpSec(ntp.seconds);
+			receiverReferenceTimeReport->SetNtpFrac(ntp.fractions);
 		}
 
+		// RTCP Compound packet buffer cannot hold the data.
+		if (!packet->Add(receiverReports, receiverReferenceTimeReport))
+			return false;
+
 		this->lastRtcpSentTime = nowMs;
+
+		return true;
 	}
 
 	void Producer::RequestKeyFrame(uint32_t mappedSsrc)
@@ -1239,6 +1310,21 @@ namespace RTC
 				bufferPtr += extenLen;
 			}
 
+			// Proxy http://www.webrtc.org/experiments/rtp-hdrext/abs-capture-time.
+			extenValue = packet->GetExtension(this->rtpHeaderExtensionIds.absCaptureTime, extenLen);
+
+			if (extenValue)
+			{
+				std::memcpy(bufferPtr, extenValue, extenLen);
+
+				extensions.emplace_back(
+				  static_cast<uint8_t>(RTC::RtpHeaderExtensionUri::Type::ABS_CAPTURE_TIME),
+				  extenLen,
+				  bufferPtr);
+
+				bufferPtr += extenLen;
+			}
+
 			if (this->kind == RTC::Media::Kind::AUDIO)
 			{
 				// Proxy urn:ietf:params:rtp-hdrext:ssrc-audio-level.
@@ -1260,11 +1346,12 @@ namespace RTC
 			else if (this->kind == RTC::Media::Kind::VIDEO)
 			{
 				// Add http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time.
+				// NOTE: This is for REMB.
 				{
 					extenLen = 3u;
 
 					// NOTE: Add value 0. The sending Transport will update it.
-					uint32_t absSendTime{ 0u };
+					const uint32_t absSendTime{ 0u };
 
 					Utils::Byte::Set3Bytes(bufferPtr, 0, absSendTime);
 
@@ -1275,11 +1362,12 @@ namespace RTC
 				}
 
 				// Add http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01.
+				// NOTE: We don't include it in outbound audio packets for now.
 				{
 					extenLen = 2u;
 
 					// NOTE: Add value 0. The sending Transport will update it.
-					uint16_t wideSeqNumber{ 0u };
+					const uint16_t wideSeqNumber{ 0u };
 
 					Utils::Byte::Set2Bytes(bufferPtr, 0, wideSeqNumber);
 
@@ -1345,21 +1433,6 @@ namespace RTC
 					extensions.emplace_back(
 					  static_cast<uint8_t>(RTC::RtpHeaderExtensionUri::Type::TOFFSET), extenLen, bufferPtr);
 
-					bufferPtr += extenLen;
-				}
-
-				// Proxy http://www.webrtc.org/experiments/rtp-hdrext/abs-capture-time.
-				extenValue = packet->GetExtension(this->rtpHeaderExtensionIds.absCaptureTime, extenLen);
-
-				if (extenValue)
-				{
-					std::memcpy(bufferPtr, extenValue, extenLen);
-
-					extensions.emplace_back(
-					  static_cast<uint8_t>(RTC::RtpHeaderExtensionUri::Type::ABS_CAPTURE_TIME),
-					  extenLen,
-					  bufferPtr);
-
 					// Not needed since this is the latest added extension.
 					// bufferPtr += extenLen;
 				}
@@ -1423,7 +1496,7 @@ namespace RTC
 					data["flip"]     = this->videoOrientation.flip;
 					data["rotation"] = this->videoOrientation.rotation;
 
-					Channel::ChannelNotifier::Emit(this->id, "videoorientationchange", data);
+					this->shared->channelNotifier->Emit(this->id, "videoorientationchange", data);
 				}
 			}
 		}
@@ -1453,7 +1526,7 @@ namespace RTC
 			jsonEntry["score"] = rtpStream->GetScore();
 		}
 
-		Channel::ChannelNotifier::Emit(this->id, "score", data);
+		this->shared->channelNotifier->Emit(this->id, "score", data);
 	}
 
 	inline void Producer::EmitTraceEventRtpAndKeyFrameTypes(RTC::RtpPacket* packet, bool isRtx) const
@@ -1473,7 +1546,7 @@ namespace RTC
 			if (isRtx)
 				data["info"]["isRtx"] = true;
 
-			Channel::ChannelNotifier::Emit(this->id, "trace", data);
+			this->shared->channelNotifier->Emit(this->id, "trace", data);
 		}
 		else if (this->traceEventTypes.rtp)
 		{
@@ -1488,7 +1561,7 @@ namespace RTC
 			if (isRtx)
 				data["info"]["isRtx"] = true;
 
-			Channel::ChannelNotifier::Emit(this->id, "trace", data);
+			this->shared->channelNotifier->Emit(this->id, "trace", data);
 		}
 	}
 
@@ -1506,7 +1579,7 @@ namespace RTC
 		data["direction"]    = "out";
 		data["info"]["ssrc"] = ssrc;
 
-		Channel::ChannelNotifier::Emit(this->id, "trace", data);
+		this->shared->channelNotifier->Emit(this->id, "trace", data);
 	}
 
 	inline void Producer::EmitTraceEventFirType(uint32_t ssrc) const
@@ -1523,7 +1596,7 @@ namespace RTC
 		data["direction"]    = "out";
 		data["info"]["ssrc"] = ssrc;
 
-		Channel::ChannelNotifier::Emit(this->id, "trace", data);
+		this->shared->channelNotifier->Emit(this->id, "trace", data);
 	}
 
 	inline void Producer::EmitTraceEventNackType() const
@@ -1540,7 +1613,7 @@ namespace RTC
 		data["direction"] = "out";
 		data["info"]      = json::object();
 
-		Channel::ChannelNotifier::Emit(this->id, "trace", data);
+		this->shared->channelNotifier->Emit(this->id, "trace", data);
 	}
 
 	inline void Producer::OnRtpStreamScore(RTC::RtpStream* rtpStream, uint8_t score, uint8_t previousScore)

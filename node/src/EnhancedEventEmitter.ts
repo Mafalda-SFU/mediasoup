@@ -3,7 +3,7 @@ import { Logger } from './Logger';
 
 const logger = new Logger('EnhancedEventEmitter');
 
-type Events = Record<string, any[]>
+type Events = Record<string, any[]>;
 
 export class EnhancedEventEmitter<E extends Events = Events> extends EventEmitter
 {
@@ -109,7 +109,7 @@ export class EnhancedEventEmitter<E extends Events = Events> extends EventEmitte
 		return this;
 	}
 
-	removeAllListeners<K extends keyof E & string>(eventName: K): this
+	removeAllListeners<K extends keyof E & string>(eventName?: K): this
 	{
 		super.removeAllListeners(eventName);
 

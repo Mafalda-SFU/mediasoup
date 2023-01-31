@@ -5,7 +5,6 @@
 #include "Logger.hpp"
 #include "MediaSoupErrors.hpp"
 #include "Utils.hpp"
-#include "Channel/ChannelNotifier.hpp"
 
 namespace RTC
 {
@@ -46,8 +45,8 @@ namespace RTC
 	/* Instance methods. */
 
 	// NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
-	PlainTransport::PlainTransport(const std::string& id, RTC::Transport::Listener* listener, json& data)
-	  : RTC::Transport::Transport(id, listener, data)
+	PlainTransport::PlainTransport(RTC::Shared* shared, const std::string& id, RTC::Transport::Listener* listener, json& data)
+	  : RTC::Transport::Transport(shared, id, listener, data)
 	{
 		MS_TRACE();
 
@@ -173,7 +172,6 @@ namespace RTC
 		try
 		{
 			// This may throw.
-			// This may throw.
 			if (port != 0)
 				this->udpSocket = new RTC::UdpSocket(this, this->listenIp.ip, port);
 			else
@@ -184,6 +182,13 @@ namespace RTC
 				// This may throw.
 				this->rtcpUdpSocket = new RTC::UdpSocket(this, this->listenIp.ip);
 			}
+
+			// NOTE: This may throw.
+			this->shared->channelMessageRegistrator->RegisterHandler(
+			  this->id,
+			  /*channelRequestHandler*/ this,
+			  /*payloadChannelRequestHandler*/ this,
+			  /*payloadChannelNotificationHandler*/ this);
 		}
 		catch (const MediaSoupError& error)
 		{
@@ -200,6 +205,8 @@ namespace RTC
 	PlainTransport::~PlainTransport()
 	{
 		MS_TRACE();
+
+		this->shared->channelMessageRegistrator->UnregisterHandler(this->id);
 
 		delete this->udpSocket;
 		this->udpSocket = nullptr;
@@ -679,7 +686,7 @@ namespace RTC
 		}
 	}
 
-	void PlainTransport::HandleNotification(PayloadChannel::Notification* notification)
+	void PlainTransport::HandleNotification(PayloadChannel::PayloadChannelNotification* notification)
 	{
 		MS_TRACE();
 
@@ -770,6 +777,8 @@ namespace RTC
 
 		if (!IsConnected())
 			return;
+
+		packet->Serialize(RTC::RTCP::Buffer);
 
 		const uint8_t* data = packet->GetData();
 		auto intLen         = static_cast<int>(packet->GetSize());
@@ -932,7 +941,7 @@ namespace RTC
 
 				this->tuple->FillJson(data["tuple"]);
 
-				Channel::ChannelNotifier::Emit(this->id, "tuple", data);
+				this->shared->channelNotifier->Emit(this->id, "tuple", data);
 
 				RTC::Transport::Connected();
 			}
@@ -999,7 +1008,7 @@ namespace RTC
 
 				this->tuple->FillJson(data["tuple"]);
 
-				Channel::ChannelNotifier::Emit(this->id, "tuple", data);
+				this->shared->channelNotifier->Emit(this->id, "tuple", data);
 
 				RTC::Transport::Connected();
 			}
@@ -1027,7 +1036,7 @@ namespace RTC
 
 			this->rtcpTuple->FillJson(data["rtcpTuple"]);
 
-			Channel::ChannelNotifier::Emit(this->id, "rtcptuple", data);
+			this->shared->channelNotifier->Emit(this->id, "rtcptuple", data);
 		}
 		// If RTCP-mux verify that the packet's tuple matches our RTP tuple.
 		else if (this->rtcpMux && !this->tuple->Compare(tuple))
@@ -1089,7 +1098,7 @@ namespace RTC
 
 				this->tuple->FillJson(data["tuple"]);
 
-				Channel::ChannelNotifier::Emit(this->id, "tuple", data);
+				this->shared->channelNotifier->Emit(this->id, "tuple", data);
 
 				RTC::Transport::Connected();
 			}

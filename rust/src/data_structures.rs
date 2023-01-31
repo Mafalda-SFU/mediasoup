@@ -289,7 +289,7 @@ impl Default for DtlsRole {
 /// The hash function algorithm (as defined in the "Hash function Textual Names" registry initially
 /// specified in [RFC 4572](https://tools.ietf.org/html/rfc4572#section-8) Section 8) and its
 /// corresponding certificate fingerprint value.
-#[derive(Copy, Clone, PartialOrd, PartialEq)]
+#[derive(Copy, Clone, PartialOrd, Eq, PartialEq)]
 pub enum DtlsFingerprint {
     /// sha-1
     Sha1 {
@@ -377,8 +377,7 @@ impl<'de> Deserialize<'de> for DtlsFingerprint {
                         *v = u8::from_str_radix(&input[i * 3..(i * 3) + 2], 16).map_err(
                             |error| {
                                 format!(
-                                    "Failed to parse value {} as series of hex bytes: {}",
-                                    input, error,
+                                    "Failed to parse value {input} as series of hex bytes: {error}"
                                 )
                             },
                         )?;
@@ -748,7 +747,7 @@ impl DtlsFingerprint {
 }
 
 /// DTLS parameters.
-#[derive(Debug, Clone, PartialOrd, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialOrd, Eq, PartialEq, Deserialize, Serialize)]
 pub struct DtlsParameters {
     /// DTLS role.
     pub role: DtlsRole,

@@ -2,12 +2,14 @@
 // #define MS_LOG_DEV_LEVEL 3
 
 #include "Worker.hpp"
+#include "ChannelMessageRegistrator.hpp"
 #include "DepLibUV.hpp"
 #include "DepUsrSCTP.hpp"
 #include "Logger.hpp"
 #include "MediaSoupErrors.hpp"
 #include "Settings.hpp"
 #include "Channel/ChannelNotifier.hpp"
+#include "PayloadChannel/PayloadChannelNotifier.hpp"
 
 /* Instance methods. */
 
@@ -22,8 +24,14 @@ Worker::Worker(::Channel::ChannelSocket* channel, PayloadChannel::PayloadChannel
 	// Set us as PayloadChannel's listener.
 	this->payloadChannel->SetListener(this);
 
-	// Set the signals handler.
+	// Set the SignalHandler.
 	this->signalsHandler = new SignalsHandler(this);
+
+	// Set up the RTC::Shared singleton.
+	this->shared = new RTC::Shared(
+	  /*channelMessageRegistrator*/ new ChannelMessageRegistrator(),
+	  /*channelNotifier*/ new Channel::ChannelNotifier(this->channel),
+	  /*payloadChannelNotifier*/ new PayloadChannel::PayloadChannelNotifier(this->payloadChannel));
 
 #ifdef MS_EXECUTABLE
 	{
@@ -37,7 +45,7 @@ Worker::Worker(::Channel::ChannelSocket* channel, PayloadChannel::PayloadChannel
 	DepUsrSCTP::CreateChecker();
 
 	// Tell the Node process that we are running.
-	Channel::ChannelNotifier::Emit(Logger::pid, "running");
+	this->shared->channelNotifier->Emit(Logger::pid, "running");
 
 	MS_DEBUG_DEV("starting libuv loop");
 	DepLibUV::RunLoop();
@@ -82,6 +90,9 @@ void Worker::Close()
 	}
 	this->mapWebRtcServers.clear();
 
+	// Delete the RTC::Shared singleton.
+	delete this->shared;
+
 	// Close the Checker instance in DepUsrSCTP.
 	DepUsrSCTP::CloseChecker();
 
@@ -120,6 +131,12 @@ void Worker::FillJson(json& jsonObject) const
 
 		jsonRouterIdsIt->emplace_back(routerId);
 	}
+
+	// Add channelMessageHandlers.
+	jsonObject["channelMessageHandlers"] = json::object();
+	auto jsonChannelMessageHandlersIt    = jsonObject.find("channelMessageHandlers");
+
+	this->shared->channelMessageRegistrator->FillJson(*jsonChannelMessageHandlersIt);
 }
 
 void Worker::FillJsonResourceUsage(json& jsonObject) const
@@ -185,14 +202,14 @@ void Worker::FillJsonResourceUsage(json& jsonObject) const
 	jsonObject["ru_nivcsw"] = uvRusage.ru_nivcsw;
 }
 
-void Worker::SetNewWebRtcServerIdFromInternal(json& internal, std::string& webRtcServerId) const
+void Worker::SetNewWebRtcServerIdFromData(json& data, std::string& webRtcServerId) const
 {
 	MS_TRACE();
 
-	auto jsonWebRtcServerIdIt = internal.find("webRtcServerId");
+	auto jsonWebRtcServerIdIt = data.find("webRtcServerId");
 
-	if (jsonWebRtcServerIdIt == internal.end() || !jsonWebRtcServerIdIt->is_string())
-		MS_THROW_ERROR("missing internal.webRtcServerId");
+	if (jsonWebRtcServerIdIt == data.end() || !jsonWebRtcServerIdIt->is_string())
+		MS_THROW_ERROR("missing webRtcServerId");
 
 	webRtcServerId.assign(jsonWebRtcServerIdIt->get<std::string>());
 
@@ -200,14 +217,14 @@ void Worker::SetNewWebRtcServerIdFromInternal(json& internal, std::string& webRt
 		MS_THROW_ERROR("a WebRtcServer with same webRtcServerId already exists");
 }
 
-RTC::WebRtcServer* Worker::GetWebRtcServerFromInternal(json& internal) const
+RTC::WebRtcServer* Worker::GetWebRtcServerFromData(json& data) const
 {
 	MS_TRACE();
 
-	auto jsonWebRtcServerIdIt = internal.find("webRtcServerId");
+	auto jsonWebRtcServerIdIt = data.find("webRtcServerId");
 
-	if (jsonWebRtcServerIdIt == internal.end() || !jsonWebRtcServerIdIt->is_string())
-		MS_THROW_ERROR("missing internal.webRtcServerId");
+	if (jsonWebRtcServerIdIt == data.end() || !jsonWebRtcServerIdIt->is_string())
+		MS_THROW_ERROR("missing handlerId.webRtcServerId");
 
 	auto it = this->mapWebRtcServers.find(jsonWebRtcServerIdIt->get<std::string>());
 
@@ -219,14 +236,14 @@ RTC::WebRtcServer* Worker::GetWebRtcServerFromInternal(json& internal) const
 	return webRtcServer;
 }
 
-void Worker::SetNewRouterIdFromInternal(json& internal, std::string& routerId) const
+void Worker::SetNewRouterIdFromData(json& data, std::string& routerId) const
 {
 	MS_TRACE();
 
-	auto jsonRouterIdIt = internal.find("routerId");
+	auto jsonRouterIdIt = data.find("routerId");
 
-	if (jsonRouterIdIt == internal.end() || !jsonRouterIdIt->is_string())
-		MS_THROW_ERROR("missing internal.routerId");
+	if (jsonRouterIdIt == data.end() || !jsonRouterIdIt->is_string())
+		MS_THROW_ERROR("missing routerId");
 
 	routerId.assign(jsonRouterIdIt->get<std::string>());
 
@@ -234,14 +251,14 @@ void Worker::SetNewRouterIdFromInternal(json& internal, std::string& routerId) c
 		MS_THROW_ERROR("a Router with same routerId already exists");
 }
 
-RTC::Router* Worker::GetRouterFromInternal(json& internal) const
+RTC::Router* Worker::GetRouterFromData(json& data) const
 {
 	MS_TRACE();
 
-	auto jsonRouterIdIt = internal.find("routerId");
+	auto jsonRouterIdIt = data.find("routerId");
 
-	if (jsonRouterIdIt == internal.end() || !jsonRouterIdIt->is_string())
-		MS_THROW_ERROR("missing internal.routerId");
+	if (jsonRouterIdIt == data.end() || !jsonRouterIdIt->is_string())
+		MS_THROW_ERROR("missing routerId");
 
 	auto it = this->mapRouters.find(jsonRouterIdIt->get<std::string>());
 
@@ -253,7 +270,7 @@ RTC::Router* Worker::GetRouterFromInternal(json& internal) const
 	return router;
 }
 
-inline void Worker::OnChannelRequest(Channel::ChannelSocket* /*channel*/, Channel::ChannelRequest* request)
+inline void Worker::HandleRequest(Channel::ChannelRequest* request)
 {
 	MS_TRACE();
 
@@ -309,9 +326,9 @@ inline void Worker::OnChannelRequest(Channel::ChannelSocket* /*channel*/, Channe
 			{
 				std::string webRtcServerId;
 
-				SetNewWebRtcServerIdFromInternal(request->internal, webRtcServerId);
+				SetNewWebRtcServerIdFromData(request->data, webRtcServerId);
 
-				auto* webRtcServer = new RTC::WebRtcServer(webRtcServerId, request->data);
+				auto* webRtcServer = new RTC::WebRtcServer(this->shared, webRtcServerId, request->data);
 
 				this->mapWebRtcServers[webRtcServerId] = webRtcServer;
 
@@ -331,13 +348,13 @@ inline void Worker::OnChannelRequest(Channel::ChannelSocket* /*channel*/, Channe
 			break;
 		}
 
-		case Channel::ChannelRequest::MethodId::WEBRTC_SERVER_CLOSE:
+		case Channel::ChannelRequest::MethodId::WORKER_WEBRTC_SERVER_CLOSE:
 		{
 			RTC::WebRtcServer* webRtcServer{ nullptr };
 
 			try
 			{
-				webRtcServer = GetWebRtcServerFromInternal(request->internal);
+				webRtcServer = GetWebRtcServerFromData(request->data);
 			}
 			catch (const MediaSoupError& error)
 			{
@@ -346,29 +363,12 @@ inline void Worker::OnChannelRequest(Channel::ChannelSocket* /*channel*/, Channe
 
 			// Remove it from the map and delete it.
 			this->mapWebRtcServers.erase(webRtcServer->id);
+
 			delete webRtcServer;
 
 			MS_DEBUG_DEV("WebRtcServer closed [id:%s]", webRtcServer->id.c_str());
 
 			request->Accept();
-
-			break;
-		}
-
-		case Channel::ChannelRequest::MethodId::WEBRTC_SERVER_DUMP:
-		{
-			RTC::WebRtcServer* webRtcServer{ nullptr };
-
-			try
-			{
-				webRtcServer = GetWebRtcServerFromInternal(request->internal);
-
-				webRtcServer->HandleRequest(request);
-			}
-			catch (const MediaSoupError& error)
-			{
-				MS_THROW_ERROR("%s [method:%s]", error.what(), request->method.c_str());
-			}
 
 			break;
 		}
@@ -379,14 +379,14 @@ inline void Worker::OnChannelRequest(Channel::ChannelSocket* /*channel*/, Channe
 
 			try
 			{
-				SetNewRouterIdFromInternal(request->internal, routerId);
+				SetNewRouterIdFromData(request->data, routerId);
 			}
 			catch (const MediaSoupError& error)
 			{
 				MS_THROW_ERROR("%s [method:%s]", error.what(), request->method.c_str());
 			}
 
-			auto* router = new RTC::Router(routerId, this);
+			auto* router = new RTC::Router(this->shared, routerId, this);
 
 			this->mapRouters[routerId] = router;
 
@@ -397,13 +397,13 @@ inline void Worker::OnChannelRequest(Channel::ChannelSocket* /*channel*/, Channe
 			break;
 		}
 
-		case Channel::ChannelRequest::MethodId::ROUTER_CLOSE:
+		case Channel::ChannelRequest::MethodId::WORKER_CLOSE_ROUTER:
 		{
 			RTC::Router* router{ nullptr };
 
 			try
 			{
-				router = GetRouterFromInternal(request->internal);
+				router = GetRouterFromData(request->data);
 			}
 			catch (const MediaSoupError& error)
 			{
@@ -412,6 +412,7 @@ inline void Worker::OnChannelRequest(Channel::ChannelSocket* /*channel*/, Channe
 
 			// Remove it from the map and delete it.
 			this->mapRouters.erase(router->id);
+
 			delete router;
 
 			MS_DEBUG_DEV("Router closed [id:%s]", router->id.c_str());
@@ -426,9 +427,15 @@ inline void Worker::OnChannelRequest(Channel::ChannelSocket* /*channel*/, Channe
 		{
 			try
 			{
-				RTC::Router* router = GetRouterFromInternal(request->internal);
+				auto* handler =
+				  this->shared->channelMessageRegistrator->GetChannelRequestHandler(request->handlerId);
 
-				router->HandleRequest(request);
+				if (handler == nullptr)
+				{
+					MS_THROW_ERROR("Channel request handler with ID %s not found", request->handlerId.c_str());
+				}
+
+				handler->HandleRequest(request);
 			}
 			catch (const MediaSoupTypeError& error)
 			{
@@ -458,32 +465,7 @@ inline void Worker::OnChannelClosed(Channel::ChannelSocket* /*socket*/)
 	Close();
 }
 
-inline void Worker::OnPayloadChannelNotification(
-  PayloadChannel::PayloadChannelSocket* /*payloadChannel*/, PayloadChannel::Notification* notification)
-{
-	MS_TRACE();
-
-	MS_DEBUG_DEV("PayloadChannel notification received [event:%s]", notification->event.c_str());
-
-	try
-	{
-		RTC::Router* router = GetRouterFromInternal(notification->internal);
-
-		router->HandleNotification(notification);
-	}
-	catch (const MediaSoupTypeError& error)
-	{
-		MS_THROW_TYPE_ERROR("%s [event:%s]", error.what(), notification->event.c_str());
-	}
-	catch (const MediaSoupError& error)
-	{
-		MS_THROW_ERROR("%s [method:%s]", error.what(), notification->event.c_str());
-	}
-}
-
-inline void Worker::OnPayloadChannelRequest(
-  PayloadChannel::PayloadChannelSocket* /*payloadChannel*/,
-  PayloadChannel::PayloadChannelRequest* request)
+inline void Worker::HandleRequest(PayloadChannel::PayloadChannelRequest* request)
 {
 	MS_TRACE();
 
@@ -494,9 +476,16 @@ inline void Worker::OnPayloadChannelRequest(
 
 	try
 	{
-		RTC::Router* router = GetRouterFromInternal(request->internal);
+		auto* handler =
+		  this->shared->channelMessageRegistrator->GetPayloadChannelRequestHandler(request->handlerId);
 
-		router->HandleRequest(request);
+		if (handler == nullptr)
+		{
+			MS_THROW_ERROR(
+			  "PayloadChannel request handler with ID %s not found", request->handlerId.c_str());
+		}
+
+		handler->HandleRequest(request);
 	}
 	catch (const MediaSoupTypeError& error)
 	{
@@ -505,6 +494,35 @@ inline void Worker::OnPayloadChannelRequest(
 	catch (const MediaSoupError& error)
 	{
 		MS_THROW_ERROR("%s [method:%s]", error.what(), request->method.c_str());
+	}
+}
+
+inline void Worker::HandleNotification(PayloadChannel::PayloadChannelNotification* notification)
+{
+	MS_TRACE();
+
+	MS_DEBUG_DEV("PayloadChannel notification received [event:%s]", notification->event.c_str());
+
+	try
+	{
+		auto* handler = this->shared->channelMessageRegistrator->GetPayloadChannelNotificationHandler(
+		  notification->handlerId);
+
+		if (handler == nullptr)
+		{
+			MS_THROW_ERROR(
+			  "PayloadChannel notification handler with ID %s not found", notification->handlerId.c_str());
+		}
+
+		handler->HandleNotification(notification);
+	}
+	catch (const MediaSoupTypeError& error)
+	{
+		MS_THROW_TYPE_ERROR("%s [event:%s]", error.what(), notification->event.c_str());
+	}
+	catch (const MediaSoupError& error)
+	{
+		MS_THROW_ERROR("%s [method:%s]", error.what(), notification->event.c_str());
 	}
 }
 

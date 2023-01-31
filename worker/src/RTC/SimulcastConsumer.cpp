@@ -6,7 +6,6 @@
 #include "Logger.hpp"
 #include "MediaSoupErrors.hpp"
 #include "Utils.hpp"
-#include "Channel/ChannelNotifier.hpp"
 #include "RTC/Codecs/Tools.hpp"
 
 namespace RTC
@@ -21,8 +20,13 @@ namespace RTC
 	/* Instance methods. */
 
 	SimulcastConsumer::SimulcastConsumer(
-	  const std::string& id, const std::string& producerId, RTC::Consumer::Listener* listener, json& data)
-	  : RTC::Consumer::Consumer(id, producerId, listener, data, RTC::RtpParameters::Type::SIMULCAST)
+	  RTC::Shared* shared,
+	  const std::string& id,
+	  const std::string& producerId,
+	  RTC::Consumer::Listener* listener,
+	  json& data)
+	  : RTC::Consumer::Consumer(
+	      shared, id, producerId, listener, data, RTC::RtpParameters::Type::SIMULCAST)
 	{
 		MS_TRACE();
 
@@ -119,11 +123,20 @@ namespace RTC
 
 		// Create RtpStreamSend instance for sending a single stream to the remote.
 		CreateRtpStream();
+
+		// NOTE: This may throw.
+		this->shared->channelMessageRegistrator->RegisterHandler(
+		  this->id,
+		  /*channelRequestHandler*/ this,
+		  /*payloadChannelRequestHandler*/ nullptr,
+		  /*payloadChannelNotificationHandler*/ nullptr);
 	}
 
 	SimulcastConsumer::~SimulcastConsumer()
 	{
 		MS_TRACE();
+
+		this->shared->channelMessageRegistrator->UnregisterHandler(this->id);
 
 		delete this->rtpStream;
 	}
@@ -443,7 +456,7 @@ namespace RTC
 			// This can be null.
 			auto* producerRtpStream = this->producerRtpStreams.at(spatialLayer);
 
-			// Producer stream does not exist or it's not good. Ignore.
+			// Producer stream does not exist. Ignore.
 			if (!producerRtpStream)
 				continue;
 
@@ -617,17 +630,22 @@ namespace RTC
 		auto nowMs = DepLibUV::GetTimeMs();
 		uint32_t desiredBitrate{ 0u };
 
-		for (int sIdx{ static_cast<int>(this->producerRtpStreams.size()) - 1 }; sIdx >= 0; --sIdx)
+		// Let's iterate all streams of the Producer (from highest to lowest) and
+		// obtain their bitrate. Choose the highest one.
+		// NOTE: When the Producer enables a higher stream, initially the bitrate of
+		// it could be less than the bitrate of a lower stream. That's why we
+		// iterate all streams here anyway.
+		for (auto sIdx{ static_cast<int16_t>(this->producerRtpStreams.size() - 1) }; sIdx >= 0; --sIdx)
 		{
 			auto* producerRtpStream = this->producerRtpStreams.at(sIdx);
 
 			if (!producerRtpStream)
 				continue;
 
-			desiredBitrate = producerRtpStream->GetBitrate(nowMs);
+			auto streamBitrate = producerRtpStream->GetBitrate(nowMs);
 
-			if (desiredBitrate)
-				break;
+			if (streamBitrate > desiredBitrate)
+				desiredBitrate = streamBitrate;
 		}
 
 		// If consumer.rtpParameters.encodings[0].maxBitrate was given and it's
@@ -640,7 +658,8 @@ namespace RTC
 		return desiredBitrate;
 	}
 
-	void SimulcastConsumer::SendRtpPacket(std::shared_ptr<RTC::RtpPacket> packet)
+	void SimulcastConsumer::SendRtpPacket(
+	  RTC::RtpPacket* packet, std::shared_ptr<RTC::RtpPacket>& sharedPacket)
 	{
 		MS_TRACE();
 
@@ -654,7 +673,7 @@ namespace RTC
 
 		// NOTE: This may happen if this Consumer supports just some codecs of those
 		// in the corresponding Producer.
-		if (this->supportedCodecPayloadTypes.find(payloadType) == this->supportedCodecPayloadTypes.end())
+		if (!this->supportedCodecPayloadTypes[payloadType])
 		{
 			MS_DEBUG_DEV("payload type not supported [payloadType:%" PRIu8 "]", payloadType);
 
@@ -690,7 +709,7 @@ namespace RTC
 			return;
 
 		// Whether this is the first packet after re-sync.
-		bool isSyncPacket = this->syncRequired;
+		const bool isSyncPacket = this->syncRequired;
 
 		// Sync sequence number and timestamp if required.
 		if (isSyncPacket && (this->spatialLayerToSync == -1 || this->spatialLayerToSync == spatialLayer))
@@ -731,8 +750,8 @@ namespace RTC
 				else
 					diffMs = -1 * (ntpMs1 - ntpMs2);
 
-				int64_t diffTs  = diffMs * this->rtpStream->GetClockRate() / 1000;
-				uint32_t newTs2 = ts2 - diffTs;
+				int64_t diffTs        = diffMs * this->rtpStream->GetClockRate() / 1000;
+				const uint32_t newTs2 = ts2 - diffTs;
 
 				// Apply offset. This is the difference that later must be removed from the
 				// sending RTP packet.
@@ -760,8 +779,7 @@ namespace RTC
 				static const uint8_t MsOffset{ 33u }; // (1 / 30 * 1000).
 
 				int64_t maxTsExtraOffset = MaxExtraOffsetMs * this->rtpStream->GetClockRate() / 1000;
-
-				uint32_t tsExtraOffset = this->rtpStream->GetMaxPacketTs() - packet->GetTimestamp() +
+				uint32_t tsExtraOffset   = this->rtpStream->GetMaxPacketTs() - packet->GetTimestamp() +
 				                         tsOffset + MsOffset * this->rtpStream->GetClockRate() / 1000;
 
 				// NOTE: Don't ask for a key frame if already done.
@@ -791,6 +809,10 @@ namespace RTC
 
 					this->keyFrameForTsOffsetRequested = true;
 
+					// Reset flags since we are discarding this key frame.
+					this->syncRequired       = false;
+					this->spatialLayerToSync = -1;
+
 					return;
 				}
 
@@ -810,10 +832,11 @@ namespace RTC
 			this->tsOffset = tsOffset;
 
 			// Sync our RTP stream's sequence number.
-			// If previous frame has not been sent completely when we switch layer, we can tell
-			// libwebrtc that previous frame is incomplete by skipping one RTP sequence number.
-			// 'packet->GetSequenceNumber() -2' may increase SeqManager::base and increase the
-			// output sequence number.
+			// If previous frame has not been sent completely when we switch layer,
+			// we can tell libwebrtc that previous frame is incomplete by skipping
+			// one RTP sequence number.
+			// 'packet->GetSequenceNumber() -2' may increase SeqManager::base and
+			// increase the output sequence number.
 			// https://github.com/versatica/mediasoup/issues/408
 			this->rtpSeqManager.Sync(packet->GetSequenceNumber() - (this->lastSentPacketHasMarker ? 1 : 2));
 
@@ -883,7 +906,7 @@ namespace RTC
 
 		// Update RTP seq number and timestamp based on NTP offset.
 		uint16_t seq;
-		uint32_t timestamp = packet->GetTimestamp() - this->tsOffset;
+		const uint32_t timestamp = packet->GetTimestamp() - this->tsOffset;
 
 		this->rtpSeqManager.Input(packet->GetSequenceNumber(), seq);
 
@@ -912,16 +935,16 @@ namespace RTC
 		}
 
 		// Process the packet.
-		if (this->rtpStream->ReceivePacket(packet))
+		if (this->rtpStream->ReceivePacket(packet, sharedPacket))
 		{
 			if (this->rtpSeqManager.GetMaxOutput() == packet->GetSequenceNumber())
 				this->lastSentPacketHasMarker = packet->HasMarker();
 
 			// Send the packet.
-			this->listener->OnConsumerSendRtpPacket(this, packet.get());
+			this->listener->OnConsumerSendRtpPacket(this, packet);
 
 			// May emit 'trace' event.
-			EmitTraceEventRtpAndKeyFrameTypes(packet.get());
+			EmitTraceEventRtpAndKeyFrameTypes(packet);
 		}
 		else
 		{
@@ -946,39 +969,38 @@ namespace RTC
 		packet->RestorePayload();
 	}
 
-	void SimulcastConsumer::GetRtcp(
-	  RTC::RTCP::CompoundPacket* packet, RTC::RtpStreamSend* rtpStream, uint64_t nowMs)
+	bool SimulcastConsumer::GetRtcp(RTC::RTCP::CompoundPacket* packet, uint64_t nowMs)
 	{
 		MS_TRACE();
 
-		MS_ASSERT(rtpStream == this->rtpStream, "RTP stream does not match");
-
 		if (static_cast<float>((nowMs - this->lastRtcpSentTime) * 1.15) < this->maxRtcpInterval)
-			return;
+			return true;
 
-		auto* report = this->rtpStream->GetRtcpSenderReport(nowMs);
+		auto* senderReport = this->rtpStream->GetRtcpSenderReport(nowMs);
 
-		if (!report)
-			return;
-
-		packet->AddSenderReport(report);
+		if (!senderReport)
+			return true;
 
 		// Build SDES chunk for this sender.
 		auto* sdesChunk = this->rtpStream->GetRtcpSdesChunk();
 
-		packet->AddSdesChunk(sdesChunk);
+		RTC::RTCP::DelaySinceLastRr* delaySinceLastRrReport{ nullptr };
 
 		auto* dlrr = this->rtpStream->GetRtcpXrDelaySinceLastRr(nowMs);
 
 		if (dlrr)
 		{
-			auto* report = new RTC::RTCP::DelaySinceLastRr();
-
-			report->AddSsrcInfo(dlrr);
-			packet->AddDelaySinceLastRr(report);
+			delaySinceLastRrReport = new RTC::RTCP::DelaySinceLastRr();
+			delaySinceLastRrReport->AddSsrcInfo(dlrr);
 		}
 
+		// RTCP Compound packet buffer cannot hold the data.
+		if (!packet->Add(senderReport, sdesChunk, delaySinceLastRrReport))
+			return false;
+
 		this->lastRtcpSentTime = nowMs;
+
+		return true;
 	}
 
 	void SimulcastConsumer::NeedWorstRemoteFractionLost(
@@ -1448,7 +1470,7 @@ namespace RTC
 
 		FillJsonScore(data);
 
-		Channel::ChannelNotifier::Emit(this->id, "score", data);
+		this->shared->channelNotifier->Emit(this->id, "score", data);
 	}
 
 	inline void SimulcastConsumer::EmitLayersChange() const
@@ -1473,7 +1495,7 @@ namespace RTC
 			data = nullptr;
 		}
 
-		Channel::ChannelNotifier::Emit(this->id, "layerschange", data);
+		this->shared->channelNotifier->Emit(this->id, "layerschange", data);
 	}
 
 	inline RTC::RtpStream* SimulcastConsumer::GetProducerCurrentRtpStream() const

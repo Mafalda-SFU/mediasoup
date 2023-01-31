@@ -8,9 +8,8 @@ mod utils;
 
 use crate::data_structures::AppData;
 use crate::messages::{
-    RouterInternal, WebRtcServerInternal, WorkerCloseRequest, WorkerCreateRouterRequest,
-    WorkerCreateWebRtcServerData, WorkerCreateWebRtcServerRequest, WorkerDumpRequest,
-    WorkerUpdateSettingsRequest,
+    WorkerCloseRequest, WorkerCreateRouterRequest, WorkerCreateWebRtcServerRequest,
+    WorkerDumpRequest, WorkerUpdateSettingsRequest,
 };
 pub use crate::ortc::RtpCapabilitiesError;
 use crate::router::{Router, RouterId, RouterOptions};
@@ -35,6 +34,7 @@ use std::sync::Arc;
 use std::{fmt, io};
 use thiserror::Error;
 use utils::WorkerRunResult;
+use uuid::Uuid;
 
 uuid_based_wrapper_type!(
     /// Worker identifier.
@@ -182,6 +182,13 @@ pub struct WorkerSettings {
     ///
     /// If `None`, a certificate is dynamically created.
     pub dtls_files: Option<WorkerDtlsFiles>,
+    /// Field trials for libwebrtc.
+    ///
+    /// NOTE: For advanced users only. An invalid value will make the worker crash.
+    /// Default value is
+    /// "WebRTC-Bwe-AlrLimitedBackoff/Enabled/".
+    #[doc(hidden)]
+    pub libwebrtc_field_trials: Option<String>,
     /// Function that will be called under worker thread before worker starts, can be used for
     /// pinning worker threads to CPU cores.
     pub thread_initializer: Option<Arc<dyn Fn() + Send + Sync>>,
@@ -192,10 +199,25 @@ pub struct WorkerSettings {
 impl Default for WorkerSettings {
     fn default() -> Self {
         Self {
-            log_level: WorkerLogLevel::default(),
-            log_tags: Vec::new(),
+            log_level: WorkerLogLevel::Debug,
+            log_tags: vec![
+                WorkerLogTag::Info,
+                WorkerLogTag::Ice,
+                WorkerLogTag::Dtls,
+                WorkerLogTag::Rtp,
+                WorkerLogTag::Srtp,
+                WorkerLogTag::Rtcp,
+                WorkerLogTag::Rtx,
+                WorkerLogTag::Bwe,
+                WorkerLogTag::Score,
+                WorkerLogTag::Simulcast,
+                WorkerLogTag::Svc,
+                WorkerLogTag::Sctp,
+                WorkerLogTag::Message,
+            ],
             rtc_ports_range: 10000..=59999,
             dtls_files: None,
+            libwebrtc_field_trials: None,
             thread_initializer: None,
             app_data: AppData::default(),
         }
@@ -209,6 +231,7 @@ impl fmt::Debug for WorkerSettings {
             log_tags,
             rtc_ports_range,
             dtls_files,
+            libwebrtc_field_trials,
             thread_initializer,
             app_data,
         } = self;
@@ -218,6 +241,7 @@ impl fmt::Debug for WorkerSettings {
             .field("log_tags", &log_tags)
             .field("rtc_ports_range", &rtc_ports_range)
             .field("dtls_files", &dtls_files)
+            .field("libwebrtc_field_trials", &libwebrtc_field_trials)
             .field(
                 "thread_initializer",
                 &thread_initializer.as_ref().map(|_| "ThreadInitializer"),
@@ -243,6 +267,15 @@ pub struct WorkerUpdateSettings {
     pub log_tags: Option<Vec<WorkerLogTag>>,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[doc(hidden)]
+pub struct ChannelMessageHandlers {
+    pub channel_request_handlers: Vec<Uuid>,
+    pub payload_channel_request_handlers: Vec<Uuid>,
+    pub payload_channel_notification_handlers: Vec<Uuid>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 #[doc(hidden)]
@@ -252,6 +285,7 @@ pub struct WorkerDump {
     pub router_ids: Vec<RouterId>,
     #[serde(rename = "webRtcServerIds")]
     pub webrtc_server_ids: Vec<WebRtcServerId>,
+    pub channel_message_handlers: ChannelMessageHandlers,
 }
 
 /// Error that caused [`Worker::create_webrtc_server`] to fail.
@@ -274,6 +308,7 @@ pub enum CreateRouterError {
 }
 
 #[derive(Default)]
+#[allow(clippy::type_complexity)]
 struct Handlers {
     new_router: Bag<Arc<dyn Fn(&Router) + Send + Sync>, Router>,
     new_webrtc_server: Bag<Arc<dyn Fn(&WebRtcServer) + Send + Sync>, WebRtcServer>,
@@ -310,6 +345,7 @@ impl Inner {
             log_tags,
             rtc_ports_range,
             dtls_files,
+            libwebrtc_field_trials,
             thread_initializer,
             app_data,
         }: WorkerSettings,
@@ -348,6 +384,13 @@ impl Inner {
                     .private_key
                     .to_str()
                     .expect("Paths are only expected to be utf8")
+            ));
+        }
+
+        if let Some(libwebrtc_field_trials) = libwebrtc_field_trials {
+            spawn_args.push(format!(
+                "--libwebrtcFieldTrials={}",
+                libwebrtc_field_trials.as_str()
             ));
         }
 
@@ -457,8 +500,7 @@ impl Inner {
                     Err(error) => Err(io::Error::new(
                         io::ErrorKind::Other,
                         format!(
-                            "unexpected first notification from worker [id:{}]: {:?}; error = {}",
-                            id, notification, error
+                            "unexpected first notification from worker [id:{id}]: {notification:?}; error = {error}"
                         ),
                     )),
                 };
@@ -494,7 +536,7 @@ impl Inner {
                                 error!("[id:{}] {}", id, text)
                             }
                         }
-                        channel::InternalMessage::Dump(text) => eprintln!("{}", text),
+                        channel::InternalMessage::Dump(text) => eprintln!("{text}"),
                         channel::InternalMessage::Unexpected(data) => error!(
                             "worker[id:{}] unexpected channel data: {}",
                             id,
@@ -529,7 +571,7 @@ impl Inner {
 
             self.executor
                 .spawn(async move {
-                    let _ = channel.request(WorkerCloseRequest {}).await;
+                    let _ = channel.request("", WorkerCloseRequest {}).await;
 
                     // Drop channels in here after response from worker
                     drop(channel);
@@ -599,7 +641,7 @@ impl Worker {
     pub async fn dump(&self) -> Result<WorkerDump, RequestError> {
         debug!("dump()");
 
-        self.inner.channel.request(WorkerDumpRequest {}).await
+        self.inner.channel.request("", WorkerDumpRequest {}).await
     }
 
     /// Updates the worker settings in runtime. Just a subset of the worker settings can be updated.
@@ -608,7 +650,7 @@ impl Worker {
 
         self.inner
             .channel
-            .request(WorkerUpdateSettingsRequest { data })
+            .request("", WorkerUpdateSettingsRequest { data })
             .await
     }
 
@@ -627,7 +669,6 @@ impl Worker {
         } = webrtc_server_options;
 
         let webrtc_server_id = WebRtcServerId::new();
-        let internal = WebRtcServerInternal { webrtc_server_id };
 
         let _buffer_guard = self
             .inner
@@ -636,10 +677,13 @@ impl Worker {
 
         self.inner
             .channel
-            .request(WorkerCreateWebRtcServerRequest {
-                internal,
-                data: WorkerCreateWebRtcServerData { listen_infos },
-            })
+            .request(
+                "",
+                WorkerCreateWebRtcServerRequest {
+                    webrtc_server_id,
+                    listen_infos,
+                },
+            )
             .await
             .map_err(CreateWebRtcServerError::Request)?;
 
@@ -677,13 +721,12 @@ impl Worker {
             .map_err(CreateRouterError::FailedRtpCapabilitiesGeneration)?;
 
         let router_id = RouterId::new();
-        let internal = RouterInternal { router_id };
 
         let _buffer_guard = self.inner.channel.buffer_messages_for(router_id.into());
 
         self.inner
             .channel
-            .request(WorkerCreateRouterRequest { internal })
+            .request("", WorkerCreateRouterRequest { router_id })
             .await
             .map_err(CreateRouterError::Request)?;
 
