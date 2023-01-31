@@ -54,7 +54,6 @@
     "lint": "npm run lint:node && npm run lint:worker",
     "lint:node": "node npm-scripts.js lint:node",
     "lint:worker": "node npm-scripts.js lint:worker",
-    "postinstall": "node npm-scripts.js postinstall",
     "precoverage": "npm run worker:build",
     "prepare": "node npm-scripts.js prepare",
     "pretest:node": "npm run worker:build",
