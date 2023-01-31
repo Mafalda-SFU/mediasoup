@@ -43,11 +43,6 @@
 # worker scripts node-modules.
 /worker/scripts/node_modules/
 
-# Visual Studio generated Stuff.
-/worker/**/Debug/
-/worker/**/Release/
-/worker/.vs/
-
 # Rust.
 /target
 /Cargo.lock
