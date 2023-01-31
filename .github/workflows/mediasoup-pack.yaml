@@ -16,10 +16,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       - name: Node.js
-        uses: actions/setup-node@v2
+        uses: actions/setup-node@v3
 
       - run: npm run worker:build
 
@@ -36,10 +36,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       - name: Node.js
-        uses: actions/setup-node@v2
+        uses: actions/setup-node@v3
 
       - run: npm run worker:build
 
@@ -56,10 +56,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       - name: Node.js
-        uses: actions/setup-node@v2
+        uses: actions/setup-node@v3
 
       - run: npm run worker:build
 
@@ -78,7 +78,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       - name: Download prebuild image for Linux x86_64
         uses: actions/download-artifact@v2
@@ -101,7 +101,7 @@ jobs:
       - run: chmod +x worker/out/*/Release/mediasoup-worker*
 
       - name: Node.js for GitHub Packages Registry
-        uses: actions/setup-node@v2
+        uses: actions/setup-node@v3
         with:
           registry-url: 'https://npm.pkg.github.com'
 
@@ -111,7 +111,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Node.js for npmjs
-        uses: actions/setup-node@v2
+        uses: actions/setup-node@v3
         with:
           registry-url: 'https://registry.npmjs.org'
 
