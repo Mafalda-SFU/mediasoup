@@ -3,7 +3,7 @@ name: mediasoup-pack
 on:
   push:
     tags:
-    - [0-9]+.[0-9]+.[0-9]+  # Only build for tags that match new versions of `npm` packages
+    - '[0-9]+.[0-9]+.[0-9]+'  # Only build for tags that match new versions of `npm` packages
   # Manual dispatch, only for testing purposses
   # See https://docs.github.com/en/actions/managing-workflow-runs/manually-running-a-workflow
   workflow_dispatch:
