@@ -53,7 +53,7 @@ switch (task)
 			canAccess = true;
 		}
 		catch (e) {}
-		if (!canAccess) executeCmd('npm run worker:build');
+		if (!canAccess) buildWorker();
 
 		// TODO: Compile flatbuffers.
 
