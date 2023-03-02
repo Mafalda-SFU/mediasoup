@@ -30,5 +30,6 @@ jobs:
       - name: Merge, tag and push
         run: |
           git merge "${{ steps.previoustag.outputs.tag }}"
+          git push
           git tag --force "${{ steps.previoustag.outputs.tag }}"
           git push --force --tags
