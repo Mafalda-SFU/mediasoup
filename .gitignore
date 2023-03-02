@@ -40,16 +40,5 @@
 # JetBrains IDE stuff.
 /.idea
 
-# worker scripts node-modules.
-/worker/scripts/node_modules/
-
-# Rust.
-/target
-/Cargo.lock
-
-# Rust examples.
-/rust/examples-frontend/*/node_modules
-/rust/examples-frontend/*/package-lock.json
-
-# Temporarily included meson.build files
-!/worker/subprojects/packagefiles
+# Packaged module.
+*.tgz
