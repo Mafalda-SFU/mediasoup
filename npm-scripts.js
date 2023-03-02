@@ -60,29 +60,29 @@ switch (task)
 		break;
 	}
 
-	case 'install':
+	case 'postinstall':
 	{
-		// Provided path to `mediasoup-worker` executable, use it and do nothing
-		if (process.env.MEDIASOUP_WORKER_BIN) break;
-
-		// Bundled `mediasoup-worker` executable available for this platform
-		let dirEntries;
-
-		try
+		if (!process.env.MEDIASOUP_WORKER_BIN)
 		{
-			dirEntries = fs.readdirSync(join(__dirname, 'worker', 'out'));
-		}
-		catch (error)
-		{
-			if (error.code !== 'ENOENT') throw error;
-		}
-		if (dirEntries && dirEntries.includes(getTriplet())) break;
+			// Bundled `mediasoup-worker` executable available for this platform
+			let dirEntries;
 
-		buildWorker();
+			try
+			{
+				dirEntries = fs.readdirSync(join(__dirname, 'worker', 'out'));
+			}
+			catch (error)
+			{
+				if (error.code !== 'ENOENT') throw error;
+			}
+			if (dirEntries && dirEntries.includes(getTriplet())) break;
 
-		if (!process.env.MEDIASOUP_LOCAL_DEV)
-		{
-			cleanWorker();
+			buildWorker();
+
+			if (!process.env.MEDIASOUP_LOCAL_DEV)
+			{
+				cleanWorker();
+			}
 		}
 
 		break;

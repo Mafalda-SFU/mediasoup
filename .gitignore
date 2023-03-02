@@ -1,5 +1,3 @@
-*.tgz
-
 ## Meson.
 /worker/subprojects/*
 !/worker/subprojects/*.wrap
@@ -34,7 +32,6 @@
 *.swp
 *.swo
 .DS_Store
-
 # Vistual Studio Code stuff.
 /.vscode
 # JetBrains IDE stuff.
