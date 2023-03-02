@@ -1,4 +1,4 @@
-name: mediasoup-pack
+name: nightly
 
 on:
   schedule:
