@@ -53,7 +53,10 @@ switch (task)
 			canAccess = true;
 		}
 		catch (e) {}
-		if (!canAccess) buildWorker();
+		if (!canAccess)
+		{
+			buildWorker();
+		}
 
 		// TODO: Compile flatbuffers.
 
@@ -73,9 +76,15 @@ switch (task)
 			}
 			catch (error)
 			{
-				if (error.code !== 'ENOENT') throw error;
+				if (error.code !== 'ENOENT')
+				{
+					throw error;
+				}
 			}
-			if (dirEntries && dirEntries.includes(getTriplet())) break;
+			if (dirEntries && dirEntries.includes(getTriplet()))
+			{
+				break;
+			}
 
 			buildWorker();
 
