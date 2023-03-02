@@ -1,7 +1,12 @@
+name: mediasoup-pack
+
 on:
   schedule:
   - cron: "0 0 * * *"
+  # Manual dispatch, only for testing purposses
+  # See https://docs.github.com/en/actions/managing-workflow-runs/manually-running-a-workflow
   workflow_dispatch:
+
 jobs:
   nightly:
     runs-on: ubuntu-latest
