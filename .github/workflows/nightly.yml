@@ -1,0 +1,29 @@
+on:
+  schedule:
+  - cron: "0 0 * * *"
+  workflow_dispatch:
+jobs:
+  nightly:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Add upstream repository
+        run: |
+          git remote add versatica https://github.com/versatica/mediasoup.git
+          git remote update --prune
+      - name: 'Get Previous tag'
+        id: previoustag
+        uses: "WyriHaximus/github-action-get-previous-tag@v1"
+
+      - name: Config git user name and email
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+      - name: Merge, tag and push
+        run: |
+          git merge "${{ steps.previoustag.outputs.tag }}"
+          git tag --force "${{ steps.previoustag.outputs.tag }}"
+          git push --force --tags
