@@ -15,6 +15,7 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Get tag
       - name: Add upstream repository
         run: |
           git remote add versatica https://github.com/versatica/mediasoup.git
@@ -23,13 +24,16 @@ jobs:
         id: previoustag
         uses: "WyriHaximus/github-action-get-previous-tag@v1"
 
+      # Merge and re-tag
       - name: Config git user name and email
         run: |
           git config user.name github-actions
           git config user.email github-actions@github.com
-      - name: Merge, tag and push
+      - name: Merge and push
         run: |
           git merge "${{ steps.previoustag.outputs.tag }}"
           git push
+      - name: Tag and push
+        run: |
           git tag --force "${{ steps.previoustag.outputs.tag }}"
           git push --force --tags
