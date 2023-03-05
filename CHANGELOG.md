@@ -1,7 +1,13 @@
 # Changelog
 
 
-### Next
+### 3.11.12
+
+* Fix jitter calculation ([PR #1019](https://github.com/versatica/mediasoup/pull/1019), credits to @alexciarlillo and @snnz).
+* Update NPM deps.
+
+
+### 3.11.11
 
 * Add support for RTCP NACK in OPUS ([PR #1015](https://github.com/versatica/mediasoup/pull/1015)).
 * Update NPM deps.
