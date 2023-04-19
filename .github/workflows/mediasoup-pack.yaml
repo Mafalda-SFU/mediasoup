@@ -106,7 +106,9 @@ jobs:
           registry-url: 'https://npm.pkg.github.com'
 
       - name: Publish to GitHub Packages Registry
-        run: npm publish  # This will build the package again too.
+        # This will not build the package again, if we already generated the
+        # prebuild for the operating system and CPU where this job is running.
+        run: npm publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -115,9 +117,9 @@ jobs:
         with:
           registry-url: 'https://registry.npmjs.org'
 
-      # This will not build the package again, if we already generated the
-      # prebuild for the operating system and CPU where this job is running.
       - name: Publish to npmjs
+        # This will not build the package again, if we already generated the
+        # prebuild for the operating system and CPU where this job is running.
         run: npm publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
