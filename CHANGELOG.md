@@ -1,6 +1,14 @@
 # Changelog
 
 
+### 3.11.20
+
+* `RtpStreamSend`: Reset RTP retransmission buffer upon RTP sequence number reset ([PR #1041](https://github.com/versatica/mediasoup/pull/1041)).
+* `RtpRetransmissionBuffer`: Handle corner case in which received packet has lower seq than newest packet in the buffer but higher timestamp  ([PR #1044](https://github.com/versatica/mediasoup/pull/1044)).
+* `SeqManager`: Fix crash and add fuzzer ([PR #1045](https://github.com/versatica/mediasoup/pull/1045)).
+* Node: Make `appData` TS typed and writable ([PR #1046](https://github.com/versatica/mediasoup/pull/1046), credits to @mango-martin).
+
+
 ### 3.11.19
 
 * `SvcConsumer`: Properly handle VP9 K-SVC bandwidth allocation ([PR #1036](https://github.com/versatica/mediasoup/pull/1036) by @vpalmisano).
