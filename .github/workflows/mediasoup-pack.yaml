@@ -23,7 +23,7 @@ jobs:
 
       - run: npm run worker:build
 
-      - uses: actions/upload-artifact@v2
+      - uses: actions/upload-artifact@v3
         with:
           name: linux-x64
           path: worker/out/linux-x64/Release/mediasoup-worker
@@ -43,7 +43,7 @@ jobs:
 
       - run: npm run worker:build
 
-      - uses: actions/upload-artifact@v2
+      - uses: actions/upload-artifact@v3
         with:
           name: darwin-x64
           path: worker/out/darwin-x64/Release/mediasoup-worker
@@ -63,7 +63,7 @@ jobs:
 
       - run: npm run worker:build
 
-      - uses: actions/upload-artifact@v2
+      - uses: actions/upload-artifact@v3
         with:
           name: win32-x64
           path: worker/out/win32-x64/Release/mediasoup-worker.exe
