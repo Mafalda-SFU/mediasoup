@@ -31,7 +31,9 @@ jobs:
           git config user.email github-actions@github.com
       - name: Merge
         run: |
-          git merge --strategy-option theirs "${{ steps.previoustag.outputs.tag }}"
+          git merge "${{ steps.previoustag.outputs.tag }}"
+          git checkout --theirs package.json
+          git checkout --theirs package-lock.json
       - name: Fix package name
         run: |
           jq '.name = "@mafalda/mediasoup"' package.json > package.json.tmp
