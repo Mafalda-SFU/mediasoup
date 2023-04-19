@@ -1,6 +1,12 @@
 # Changelog
 
 
+### 3.11.15
+
+* `RtpRetransmissionBuffer.cpp`: Fix crash and add fuzzer ([PR #1028](https://github.com/versatica/mediasoup/pull/1028).
+* Update NPM deps.
+
+
 ### 3.11.14
 
 * Refactor RTP retransmission buffer in a separate and testable `RTC::RetransmissionBuffer` class ([PR #1023](https://github.com/versatica/mediasoup/pull/1023).
