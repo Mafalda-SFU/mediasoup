@@ -100,6 +100,10 @@ jobs:
 
       - run: chmod +x worker/out/*/Release/mediasoup-worker*
 
+      - name: Install Node.js dependencies
+        uses: actions/setup-node@v3
+      - run: npm ci
+
       - name: Node.js for GitHub Packages Registry
         uses: actions/setup-node@v3
         with:
