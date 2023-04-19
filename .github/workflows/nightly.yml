@@ -29,11 +29,21 @@ jobs:
         run: |
           git config user.name github-actions
           git config user.email github-actions@github.com
-      - name: Merge and push
+      - name: Merge
         run: |
-          git merge "${{ steps.previoustag.outputs.tag }}"
-          git push
+          git merge --strategy-option theirs "${{ steps.previoustag.outputs.tag }}"
+      - name: Fix package name
+        run: |
+          jq '.name = "@mafalda/mediasoup"' package.json > package.json.tmp
+          mv package.json.tmp package.json
+
+          jq '(.name, .packages[""].name) |= "@mafalda/mediasoup"' package-lock.json > package-lock.json.tmp
+          mv package-lock.json.tmp package-lock.json
+
+          git add package.json package-lock.json
+          git commit --amend --no-edit package.json package-lock.json
       - name: Tag and push
         run: |
+          git push
           git tag --force "${{ steps.previoustag.outputs.tag }}"
           git push --force --tags
