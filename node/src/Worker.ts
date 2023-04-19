@@ -10,6 +10,7 @@ import { PayloadChannel } from './PayloadChannel';
 import { Router, RouterOptions } from './Router';
 import { WebRtcServer, WebRtcServerOptions } from './WebRtcServer';
 import { AppData } from './types';
+import { getTriplet } from './utils';
 
 export type WorkerLogLevel = 'debug' | 'warn' | 'error' | 'none';
 
