@@ -31,10 +31,13 @@ jobs:
           git config user.email github-actions@github.com
 
       - name: Merge with upstream
-        run: git merge "${{ steps.previoustag.outputs.tag }}"
+        id: merge
+        run: |
+          git merge "${{ steps.previoustag.outputs.tag }}" || \
+            echo "exit_status=$?" >> $GITHUB_OUTPUT
 
       - name: Fix package name
-        if: failure()
+        if: ${{ steps.merge.outputs.exit_status }}
         run: |
           git checkout --theirs package.json package-lock.json
 
