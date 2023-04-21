@@ -24,30 +24,41 @@ jobs:
         id: previoustag
         uses: "WyriHaximus/github-action-get-previous-tag@v1"
 
-      # Merge and re-tag
+      # Setup Node.js
+      - name: Node.js
+        uses: actions/setup-node@v3
+
+      # Config git user name and email
       - name: Config git user name and email
         run: |
           git config user.name github-actions
           git config user.email github-actions@github.com
 
+      # Merge and re-tag
       - name: Merge with upstream
         id: merge
         run: |
           git merge "${{ steps.previoustag.outputs.tag }}" || \
             echo "exit_status=$?" >> $GITHUB_OUTPUT
 
-      - name: Fix package name
+      - name: Resolve conflicts and fix package name
         if: ${{ steps.merge.outputs.exit_status }}
         run: |
-          git checkout --theirs package.json package-lock.json
+          # Get git-resolve-conflict
+          npm install -g git-resolve-conflict
 
+          # package.json
+          git resolve-theirs package.json
           jq '.name = "@mafalda-sfu/mediasoup"' package.json > package.json.tmp
           mv package.json.tmp package.json
 
+          # package-lock.json
+          git resolve-theirs package-lock.json
           jq '(.name, .packages[""].name) |= "@mafalda-sfu/mediasoup"' \
             package-lock.json > package-lock.json.tmp
           mv package-lock.json.tmp package-lock.json
 
+          # Commit
           git add package.json package-lock.json
           git commit --no-edit
 
