@@ -104,17 +104,17 @@ jobs:
         uses: actions/setup-node@v3
       - run: npm ci
 
-      # - name: Node.js for GitHub Packages Registry
-      #   uses: actions/setup-node@v3
-      #   with:
-      #     registry-url: 'https://npm.pkg.github.com'
+      - name: Node.js for GitHub Packages Registry
+        uses: actions/setup-node@v3
+        with:
+          registry-url: 'https://npm.pkg.github.com'
 
-      # - name: Publish to GitHub Packages Registry
-      #   # This will not build the package again, if we already generated the
-      #   # prebuild for the operating system and CPU where this job is running.
-      #   run: npm publish
-      #   env:
-      #     NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish to GitHub Packages Registry
+        # This will not build the package again, if we already generated the
+        # prebuild for the operating system and CPU where this job is running.
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Node.js for npmjs
         uses: actions/setup-node@v3
