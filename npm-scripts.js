@@ -3,7 +3,6 @@ const os = require('os');
 const fs = require('fs');
 const { join } = require('path');
 const { execSync, spawnSync } = require('child_process');
-const fetch = require('node-fetch');
 const tar = require('tar');
 
 const PKG = JSON.parse(fs.readFileSync('./package.json').toString());
