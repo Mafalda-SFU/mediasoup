@@ -1,4 +1,6 @@
+import { fileURLToPath } from 'url';
 import process from 'process';
+import { join } from 'path';
 import os from 'os';
 import fs from 'fs';
 import { execSync, spawnSync } from 'child_process';
@@ -25,6 +27,7 @@ function getTriplet()
 	return `${os.platform()}-${os.arch()}`;
 }
 
+const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const task = process.argv.slice(2).join(' ');
 
 run();
