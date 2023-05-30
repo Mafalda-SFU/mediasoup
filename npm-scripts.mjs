@@ -1,9 +1,9 @@
-const process = require('process');
-const os = require('os');
-const fs = require('fs');
-const { join } = require('path');
-const { execSync, spawnSync } = require('child_process');
-const tar = require('tar');
+import process from 'process';
+import os from 'os';
+import fs from 'fs';
+import { execSync, spawnSync } from 'child_process';
+import fetch from 'node-fetch';
+import tar from 'tar';
 
 const PKG = JSON.parse(fs.readFileSync('./package.json').toString());
 const IS_FREEBSD = os.platform() === 'freebsd';
@@ -121,8 +121,8 @@ async function run()
 
 		case 'typescript:watch':
 		{
-			// NOTE: Load dep here since it's a devDependency.
-			const { TscWatchClient } = require('tsc-watch/client');
+			// NOTE: Load dep on demand since it's a devDependency.
+			const { TscWatchClient } = await import('tsc-watch/client.js');
 
 			const watch = new TscWatchClient();
 
@@ -242,8 +242,8 @@ async function run()
 
 			try
 			{
-				octokit = getOctokit();
-				versionChanges = getVersionChanges();
+				octokit = await getOctokit();
+				versionChanges = await getVersionChanges();
 			}
 			catch (error)
 			{
@@ -399,7 +399,7 @@ function lintNode()
 {
 	logInfo('lintNode()');
 
-	executeCmd('eslint -c node/.eslintrc.js --max-warnings 0 node/src node/.eslintrc.js npm-scripts.js worker/scripts/gulpfile.js');
+	executeCmd('eslint -c node/.eslintrc.js --max-warnings 0 node/src node/.eslintrc.js npm-scripts.mjs worker/scripts/gulpfile.js');
 }
 
 function lintWorker()
@@ -641,7 +641,7 @@ async function uploadMacArmPrebuiltWorker()
 		return;
 	}
 
-	const octokit = getOctokit();
+	const octokit = await getOctokit();
 
 	logInfo('uploadMacArmPrebuiltWorker() | getting release info');
 
@@ -665,15 +665,15 @@ async function uploadMacArmPrebuiltWorker()
 		});
 }
 
-function getOctokit()
+async function getOctokit()
 {
 	if (!process.env.GITHUB_TOKEN)
 	{
 		throw new Error('missing GITHUB_TOKEN environment variable');
 	}
 
-	// NOTE: Load dep here since it's a devDependency.
-	const { Octokit } = require('@octokit/rest');
+	// NOTE: Load dep on demand since it's a devDependency.
+	const { Octokit } = await import('@octokit/rest');
 
 	const octokit = new Octokit(
 		{
@@ -683,12 +683,12 @@ function getOctokit()
 	return octokit;
 }
 
-function getVersionChanges()
+async function getVersionChanges()
 {
 	logInfo('getVersionChanges()');
 
-	// NOTE: Load dep here since it's a devDependency.
-	const marked = require('marked');
+	// NOTE: Load dep on demand since it's a devDependency.
+	const marked = await import('marked');
 
 	const changelog = fs.readFileSync('./CHANGELOG.md').toString();
 	const entries = marked.lexer(changelog);
@@ -734,19 +734,19 @@ function executeCmd(command, exitOnError = true)
 function logInfo(message)
 {
 	// eslint-disable-next-line no-console
-	console.log(`npm-scripts.js \x1b[36m[INFO] [${task}]\x1b\[0m`, message);
+	console.log(`npm-scripts \x1b[36m[INFO] [${task}]\x1b\[0m`, message);
 }
 
 function logWarn(message)
 {
 	// eslint-disable-next-line no-console
-	console.warn(`npm-scripts.js \x1b[33m[WARN] [${task}]\x1b\[0m`, message);
+	console.warn(`npm-scripts \x1b[33m[WARN] [${task}]\x1b\[0m`, message);
 }
 
 function logError(message)
 {
 	// eslint-disable-next-line no-console
-	console.error(`npm-scripts.js \x1b[31m[ERROR] [${task}]\x1b\[0m`, message);
+	console.error(`npm-scripts \x1b[31m[ERROR] [${task}]\x1b\[0m`, message);
 }
 
 function exitWithError()
