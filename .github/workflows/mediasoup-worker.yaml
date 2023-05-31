@@ -56,7 +56,7 @@ jobs:
           node-version: ${{ matrix.node }}
 
       # We need to install some NPM production deps for npm-scripts.mjs to work.
-      - run: npm ci --ignore-scripts --omit=dev
+      - run: npm ci --ignore-scripts --omit=dev --verbose
       - run: npm run install-clang-tools
         # TODO: Maybe fix this one day.
         if: runner.os != 'Windows'

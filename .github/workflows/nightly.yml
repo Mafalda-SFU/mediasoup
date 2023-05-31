@@ -46,7 +46,7 @@ jobs:
         if: ${{ steps.merge.outputs.exit_status }}
         run: |
           # Get git-resolve-conflict
-          npm install -g git-resolve-conflict
+          npm install -g git-resolve-conflict --verbose
 
           # package.json
           git resolve-theirs package.json

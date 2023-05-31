@@ -45,6 +45,6 @@ jobs:
           restore-keys: |
             ${{ matrix.ci.os }}-node-
 
-      - run: npm ci
+      - run: npm ci --verbose
       - run: npm run lint:node
       - run: npm run test:node
