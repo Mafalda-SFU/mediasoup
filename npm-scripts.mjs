@@ -13,7 +13,6 @@ function getTriplet()
 	return `${os.platform()}-${os.arch()}`;
 }
 
-
 const PKG = JSON.parse(fs.readFileSync('./package.json').toString());
 const IS_FREEBSD = os.platform() === 'freebsd';
 const IS_WINDOWS = os.platform() === 'win32';
