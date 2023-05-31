@@ -21,6 +21,9 @@ jobs:
       - name: Node.js
         uses: actions/setup-node@v3
 
+      # We need to install some NPM production deps for npm-scripts.mjs to work.
+      - run: npm ci --ignore-scripts --omit=dev --verbose
+
       - run: npm run worker:build
 
       - uses: actions/upload-artifact@v3
@@ -41,6 +44,9 @@ jobs:
       - name: Node.js
         uses: actions/setup-node@v3
 
+      # We need to install some NPM production deps for npm-scripts.mjs to work.
+      - run: npm ci --ignore-scripts --omit=dev --verbose
+
       - run: npm run worker:build
 
       - uses: actions/upload-artifact@v3
@@ -60,6 +66,9 @@ jobs:
 
       - name: Node.js
         uses: actions/setup-node@v3
+
+      # We need to install some NPM production deps for npm-scripts.mjs to work.
+      - run: npm ci --ignore-scripts --omit=dev --verbose
 
       - run: npm run worker:build
 
