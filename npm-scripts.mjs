@@ -19,7 +19,7 @@ const IS_FREEBSD = os.platform() === 'freebsd';
 const IS_WINDOWS = os.platform() === 'win32';
 const MAYOR_VERSION = PKG.version.split('.')[0];
 const MAKE = process.env.MAKE || (IS_FREEBSD ? 'gmake' : 'make');
-const WORKER_RELEASE_DIR = 'worker/out/Release';
+const WORKER_RELEASE_DIR = `worker/out/${getTriplet()}/Release`;
 const WORKER_RELEASE_BIN = IS_WINDOWS ? 'mediasoup-worker.exe' : 'mediasoup-worker';
 const WORKER_RELEASE_BIN_PATH = `${WORKER_RELEASE_DIR}/${WORKER_RELEASE_BIN}`;
 const WORKER_PREBUILD_DIR = 'worker/prebuild';
@@ -366,7 +366,7 @@ function buildWorker()
 
 	if (IS_WINDOWS)
 	{
-		if (!fs.existsSync('worker/out/msys/bin/make.exe'))
+		if (!fs.existsSync(`worker/out/${getTriplet()}/msys/bin/make.exe`))
 		{
 			installMsysMake();
 		}
