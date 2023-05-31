@@ -7,6 +7,13 @@ import { execSync, spawnSync } from 'child_process';
 import fetch from 'node-fetch';
 import tar from 'tar';
 
+// import { getTriplet } from './node/lib/utils';
+function getTriplet()
+{
+	return `${os.platform()}-${os.arch()}`;
+}
+
+
 const PKG = JSON.parse(fs.readFileSync('./package.json').toString());
 const IS_FREEBSD = os.platform() === 'freebsd';
 const IS_WINDOWS = os.platform() === 'win32';
@@ -16,16 +23,10 @@ const WORKER_RELEASE_DIR = 'worker/out/Release';
 const WORKER_RELEASE_BIN = IS_WINDOWS ? 'mediasoup-worker.exe' : 'mediasoup-worker';
 const WORKER_RELEASE_BIN_PATH = `${WORKER_RELEASE_DIR}/${WORKER_RELEASE_BIN}`;
 const WORKER_PREBUILD_DIR = 'worker/prebuild';
-const WORKER_PREBUILD_TAR = `mediasoup-worker-${PKG.version}-${os.platform()}-${os.arch()}.tgz`;
+const WORKER_PREBUILD_TAR = `mediasoup-worker-${PKG.version}-${getTriplet()}.tgz`;
 const WORKER_PREBUILD_TAR_PATH = `${WORKER_PREBUILD_DIR}/${WORKER_PREBUILD_TAR}`;
 const GH_OWNER = 'versatica';
 const GH_REPO = 'mediasoup';
-
-// const { getTriplet } = require('./node/lib/utils');
-function getTriplet()
-{
-	return `${os.platform()}-${os.arch()}`;
-}
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const task = process.argv.slice(2).join(' ');
