@@ -3,6 +3,7 @@ import process from 'process';
 import { join } from 'path';
 import os from 'os';
 import fs from 'fs';
+import path from 'path';
 import { execSync, spawnSync } from 'child_process';
 import fetch from 'node-fetch';
 import tar from 'tar';
@@ -99,7 +100,11 @@ async function run()
 				logInfo('skipping mediasoup-worker prebuilt download, building it locally');
 
 				buildWorker();
-				cleanWorkerArtifacts();
+
+				if (!process.env.MEDIASOUP_LOCAL_DEV)
+				{
+					cleanWorkerArtifacts();
+				}
 			}
 			// Attempt to download a prebuilt binary. Fallback to building locally.
 			else if (!(await downloadPrebuiltWorker()))
@@ -402,7 +407,7 @@ function lintNode()
 {
 	logInfo('lintNode()');
 
-	executeCmd('eslint -c node/.eslintrc.js --max-warnings 0 node/src node/.eslintrc.js npm-scripts.mjs worker/scripts/gulpfile.js');
+	executeCmd('eslint -c node/.eslintrc.js --max-warnings 0 node/src node/.eslintrc.js npm-scripts.mjs worker/scripts/gulpfile.mjs');
 }
 
 function lintWorker()
@@ -592,8 +597,10 @@ async function downloadPrebuiltWorker()
 
 				try
 				{
+					const resolvedBinPath = path.resolve(WORKER_RELEASE_BIN_PATH);
+
 					execSync(
-						`${WORKER_RELEASE_BIN_PATH}`,
+						resolvedBinPath,
 						{
 							stdio : [ 'ignore', 'ignore', 'ignore' ],
 							// Ensure no env is passed to avoid accidents.
