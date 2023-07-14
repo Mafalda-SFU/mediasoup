@@ -1,6 +1,6 @@
 {
   "name": "@mafalda-sfu/mediasoup",
-  "version": "3.12.5",
+  "version": "3.12.6",
   "description": "Cutting Edge WebRTC Video Conferencing",
   "contributors": [
     "Iñaki Baz Castillo <ibc@aliax.net> (https://inakibaz.me)",
@@ -8,8 +8,8 @@
     "Nazar Mokynskyi (https://github.com/nazar-pc)",
     "Jesús Leganés-Combarro 'piranna' (https://piranna.github.io)"
   ],
-  "homepage": "https://mediasoup.org",
   "license": "ISC",
+  "homepage": "https://mediasoup.org",
   "repository": {
     "type": "git",
     "url": "https://github.com/mafalda/mediasoup.git"
@@ -40,15 +40,15 @@
     "worker/meson_options.txt",
     "npm-scripts.mjs"
   ],
+  "engines": {
+    "node": ">=16"
+  },
   "keywords": [
     "webrtc",
     "ortc",
     "sfu",
     "nodejs"
   ],
-  "engines": {
-    "node": ">=16"
-  },
   "scripts": {
     "prepare": "node npm-scripts.mjs prepare",
     "postinstall": "node npm-scripts.mjs postinstall",

@@ -249,11 +249,11 @@ async function run()
 			catch (error)
 			{
 				logError(error.message);
+
 				exitWithError();
 			}
 
 			checkRelease();
-
 			executeCmd(`git commit -am '${PKG.version}'`);
 			executeCmd(`git tag -a ${PKG.version} -m '${PKG.version}'`);
 			executeCmd(`git push origin v${MAYOR_VERSION}`);
@@ -288,7 +288,6 @@ async function run()
 		case 'release:upload-mac-arm-prebuilt-worker':
 		{
 			checkRelease();
-
 			await prebuildWorker();
 			await uploadMacArmPrebuiltWorker();
 
@@ -473,6 +472,7 @@ function installMsysMake()
 		if (res.status !== 0)
 		{
 			logError('`installMsysMake() | cannot find Python executable');
+
 			exitWithError();
 		}
 	}
@@ -730,6 +730,7 @@ function executeCmd(command, exitOnError = true)
 		if (exitOnError)
 		{
 			logError(`executeCmd() failed, exiting: ${error}`);
+
 			exitWithError();
 		}
 		else
